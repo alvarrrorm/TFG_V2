@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Gestion_polideportivo",
+    "slug": "Gestion_polideportivo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/Icono_app.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/Icono_app.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/Icono_app.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "favicon": "./assets/Icono_app.png"
+    }
+  }
+}
