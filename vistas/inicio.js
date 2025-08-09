@@ -39,7 +39,7 @@ export default function Inicio({ navigation }) {
             <View style={styles.container}>
               <View style={styles.header}>
                 <Text style={styles.title}>
-                  Bienvenido a <Text style={styles.titleHighlight}>Deppo</Text>
+                  Bienvenido a <Text style={styles.titleHighlight}>Depppo</Text>
                 </Text>
                 <Text style={styles.subtitle}>Tu pasión, nuestro compromiso</Text>
 
