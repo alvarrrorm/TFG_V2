@@ -66,7 +66,12 @@ router.post('/', (req, res) => {
         const duracion = ((hFin * 60 + mFin) - (hInicio * 60 + mInicio)) / 60;
         if (duracion <= 0) return res.status(400).json({ success: false, error: 'La hora de fin debe ser posterior a la hora de inicio' });
 
-        const precioTotal = parseFloat((precioHora * duracion).toFixed(2));
+        let precioTotal = parseFloat((precioHora * duracion).toFixed(2));
+
+        // 👉 AÑADIR SUPLEMENTO DE LUDOTECA (+5 €)
+        if (ludoteca) {
+          precioTotal += 5;
+        }
 
         // Insertar reserva
         const insertSQL = `

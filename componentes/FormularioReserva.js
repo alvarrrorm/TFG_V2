@@ -85,16 +85,25 @@ export default function FormularioReserva({ navigation }) {
     return new Date(fechaISO).toLocaleDateString('es-ES', opciones);
   };
 
-  const calcularPrecio = () => {
-    if (!form.pista || !form.horaInicio || !form.horaFin) return 0;
-    const pista = pistas.find(p => p.id.toString() === form.pista);
-    if (!pista || !pista.precio) return 0;
-    const hi = parseInt(form.horaInicio.split(':')[0], 10);
-    const hf = parseInt(form.horaFin.split(':')[0], 10);
-    const duracion = hf - hi;
-    if (duracion <= 0) return 0;
-    return pista.precio * duracion;
-  };
+ const calcularPrecio = () => {
+  if (!form.pista || !form.horaInicio || !form.horaFin) return 0;
+  const pista = pistas.find(p => p.id.toString() === form.pista);
+  if (!pista || !pista.precio) return 0;
+  const hi = parseInt(form.horaInicio.split(':')[0], 10);
+  const hf = parseInt(form.horaFin.split(':')[0], 10);
+  const duracion = hf - hi;
+  if (duracion <= 0) return 0;
+
+  let total = pista.precio * duracion;
+
+  // +5€ si se selecciona ludoteca
+  if (form.ludoteca) {
+    total += 5;
+  }
+
+  return total;
+};
+
 
   const precioTotal = calcularPrecio();
   const pistaSeleccionada = pistas.find(p => p.id.toString() === form.pista);

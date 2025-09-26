@@ -37,63 +37,85 @@ const MisReservas = () => {
 
   const formatDate = (dateString) => {
     if (!dateString) return '';
+    
+    // CORRECCIÓN: Usar 'T00:00:00' para evitar problemas de zona horaria
+    // o mejor aún, usar el método más robusto
     const date = new Date(dateString);
-    return date.toISOString().split('T')[0];
+    
+    // Asegurarnos de que la fecha se muestra correctamente
+    // sin ajustes de zona horaria
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+  };
+
+  // Función para formatear fecha para mostrar (más legible)
+  const formatDateForDisplay = (dateString) => {
+    if (!dateString) return '';
+    
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-ES', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    });
   };
 
   const fetchReservas = async () => {
-  try {
-    setError(null);
-    
-    // Verificar que tenemos el DNI del usuario
-    if (!dni) {
-      console.log('No hay DNI de usuario en el contexto');
+    try {
+      setError(null);
+      
+      // Verificar que tenemos el DNI del usuario
+      if (!dni) {
+        console.log('No hay DNI de usuario en el contexto');
+        setReservas([]);
+        return;
+      }
+      
+      console.log(`Buscando reservas para DNI: ${dni}`);
+      const response = await fetch(`http://localhost:3001/reservas?dni_usuario=${dni}`);
+      
+      if (!response.ok) {
+        throw new Error(`Error HTTP: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('Respuesta del servidor:', result);
+      
+      // Verificar que la respuesta tiene el formato correcto
+      if (!result.success || !Array.isArray(result.data)) {
+        throw new Error('Formato de respuesta inválido del servidor');
+      }
+
+      // Procesar solo las reservas del usuario actual
+      const reservasUsuario = result.data.filter(reserva => reserva.dni_usuario === dni);
+
+      const reservasProcesadas = reservasUsuario.map(reserva => ({
+        ...reserva,
+        fecha: formatDate(reserva.fecha),
+        hora_inicio: formatTime(reserva.hora_inicio),
+        hora_fin: formatTime(reserva.hora_fin),
+        precio: parseFloat(reserva.precio || 0).toFixed(2)
+      }));
+
+      const reservasOrdenadas = reservasProcesadas.sort((a, b) => {
+        const dateA = new Date(`${a.fecha}T${a.hora_inicio}`);
+        const dateB = new Date(`${b.fecha}T${b.hora_inicio}`);
+        return dateB - dateA;
+      });
+      
+      setReservas(reservasOrdenadas);
+    } catch (error) {
+      console.error('Error al cargar reservas:', error);
+      setError(error.message);
       setReservas([]);
-      return;
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-    
-    console.log(`Buscando reservas para DNI: ${dni}`);
-    const response = await fetch(`http://localhost:3001/reservas?dni_usuario=${dni}`);
-    
-    if (!response.ok) {
-      throw new Error(`Error HTTP: ${response.status}`);
-    }
-    
-    const result = await response.json();
-    console.log('Respuesta del servidor:', result);
-    
-    // Verificar que la respuesta tiene el formato correcto
-    if (!result.success || !Array.isArray(result.data)) {
-      throw new Error('Formato de respuesta inválido del servidor');
-    }
-
-    // Procesar solo las reservas del usuario actual
-    const reservasUsuario = result.data.filter(reserva => reserva.dni_usuario === dni);
-
-    const reservasProcesadas = reservasUsuario.map(reserva => ({
-      ...reserva,
-      fecha: formatDate(reserva.fecha),
-      hora_inicio: formatTime(reserva.hora_inicio),
-      hora_fin: formatTime(reserva.hora_fin),
-      precio: parseFloat(reserva.precio || 0).toFixed(2)
-    }));
-
-    const reservasOrdenadas = reservasProcesadas.sort((a, b) => {
-      const dateA = new Date(`${a.fecha}T${a.hora_inicio}`);
-      const dateB = new Date(`${b.fecha}T${b.hora_inicio}`);
-      return dateB - dateA;
-    });
-    
-    setReservas(reservasOrdenadas);
-  } catch (error) {
-    console.error('Error al cargar reservas:', error);
-    setError(error.message);
-    setReservas([]);
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
+  };
 
   const cancelarReserva = async (idReserva) => {
     try {
@@ -171,11 +193,8 @@ const MisReservas = () => {
       />
       <View style={styles.reservaInfo}>
         <Text style={styles.reservaTexto}>
-          {new Date(item.fecha).toLocaleDateString('es-ES', {
-            weekday: 'short',
-            day: 'numeric',
-            month: 'short'
-          })}, de {item.hora_inicio} a {item.hora_fin}
+          {/* CORRECCIÓN: Usar la función de formateo mejorada */}
+          {formatDateForDisplay(item.fecha)}, de {item.hora_inicio} a {item.hora_fin}
         </Text>
         <Text style={styles.reservaSubtexto}>
           Pista: {item.nombre_pista || `Pista ${item.pista}`} ({item.tipo_pista})
