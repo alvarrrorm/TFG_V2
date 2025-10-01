@@ -45,88 +45,62 @@ export default function ResumenReserva({ route, navigation }) {
     }
   };
 
-const procesarPago = async () => {
-  if (!reserva?.id) {
-    Alert.alert('Error', 'No se encontró el ID de la reserva');
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    console.log('Enviando pago para reserva ID:', reserva.id);
-    
-    const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/pagar`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
-    });
-
-    // Manejo detallado de errores HTTP
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Error del servidor:', {
-        status: response.status,
-        statusText: response.statusText,
-        errorData
-      });
-      
-      throw new Error(
-        errorData.error || 
-        `Error ${response.status}: ${response.statusText}` ||
-        'Error al procesar el pago'
-      );
+  const procesarPago = async () => {
+    if (!reserva?.id) {
+      Alert.alert('Error', 'No se encontró el ID de la reserva');
+      return;
     }
 
-    const data = await response.json();
-    console.log('Pago exitoso:', data);
+    setLoading(true);
 
-    // Actualizar el estado localmente
-    const reservaActualizada = {
-      ...reserva,
-      estado: 'pagado',
-      ...data.data
-    };
+    try {
+      console.log('Enviando pago para reserva ID:', reserva.id);
+      
+      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/pagar`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
 
-    const mensajeExito = `Pago de ${reserva.precio} € procesado correctamente.\nReserva #${reserva.id}`;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+      }
 
-if (Platform.OS === 'web') {
-  alert(mensajeExito);
-  navigation.navigate('Reservas', {
-    reserva: reservaActualizada
-  });
-} else {
-  Alert.alert(
-    'Pago exitoso',
-    mensajeExito,
-    [{
-      text: 'OK',
-      onPress: () => navigation.navigate('Reservas', {
-        reserva: reservaActualizada
-      })
-    }]
-  );
-}
+      const data = await response.json();
+      console.log('Pago exitoso:', data);
 
+      const reservaActualizada = {
+        ...reserva,
+        estado: 'pagado',
+        ...data.data
+      };
 
+      const mensajeExito = `Pago de ${reserva.precio} € procesado correctamente.\nReserva #${reserva.id}`;
 
-  } catch (error) {
-    console.error('Error completo:', {
-      message: error.message,
-      stack: error.stack
-    });
-    
-    Alert.alert(
-      'Error en el pago', 
-      error.message || 'No se pudo completar el pago. Por favor intente nuevamente.'
-    );
-  } finally {
-    setLoading(false);
-    setModalVisible(false);
-  }
-};
+      if (Platform.OS === 'web') {
+        alert(mensajeExito);
+        navigation.navigate('Reservas', { reserva: reservaActualizada });
+      } else {
+        Alert.alert(
+          'Pago exitoso',
+          mensajeExito,
+          [{ text: 'OK', onPress: () => navigation.navigate('Reservas', { reserva: reservaActualizada }) }]
+        );
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error en el pago', 
+        error.message || 'No se pudo completar el pago. Por favor intente nuevamente.'
+      );
+    } finally {
+      setLoading(false);
+      setModalVisible(false);
+    }
+  };
+
   const formatoFechaLegible = (fechaISO) => {
     if (!fechaISO) return 'No especificado';
     const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
@@ -162,10 +136,10 @@ if (Platform.OS === 'web') {
           <Text style={styles.label}>Usuario:</Text>
           <Text style={styles.valor}>{reserva.nombre_usuario || 'Desconocido'}</Text>
         </View>
-          <View style={styles.dato}>
-    <Text style={styles.label}>ID Reserva:</Text>
-    <Text style={styles.valor}>{reserva.id || 'No especificado'}</Text>
-  </View>
+        <View style={styles.dato}>
+          <Text style={styles.label}>Numero de Reserva:</Text>
+          <Text style={styles.valor}>{reserva.id || 'No especificado'}</Text>
+        </View>
         <View style={styles.dato}>
           <Text style={styles.label}>Pista:</Text>
           <Text style={styles.valor}>{reserva.nombre_pista || reserva.pista || 'No especificado'}</Text>
@@ -194,31 +168,32 @@ if (Platform.OS === 'web') {
         <View style={styles.seccion}>
           <Text style={styles.subtitulo}>Procesar Pago</Text>
           
-          {Platform.OS === 'web' ? (
-            <Text style={styles.infoPago}>
-              Haz clic en "Pagar Ahora" para completar el proceso de pago.
-            </Text>
-          ) : (
-            <Text style={styles.infoPago}>
-              Esta es una simulación de pago. Al hacer clic en "Pagar Ahora" se marcará la reserva como pagada.
-            </Text>
-          )}
+          <Text style={styles.infoPago}>
+            Puedes pagar ahora o más tarde. Tu reserva seguirá activa.
+          </Text>
           
           <TouchableOpacity 
             style={styles.botonPagar} 
             onPress={manejarPago}
             disabled={loading}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.botonTexto}>Pagar Ahora</Text>
-            )}
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.botonTexto}>Pagar Ahora</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.botonPagar, styles.botonMasTarde]} 
+            onPress={() => {
+              setModalVisible(false);
+              navigation.navigate('Reservas', { reserva });
+            }}
+            disabled={loading}
+          >
+            <Text style={styles.botonTexto}>Pagar Más Tarde</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Modal para formulario de pago en web */}
+      {/* Modal de pago en web */}
       {Platform.OS === 'web' && (
         <Modal
           animationType="slide"
@@ -285,13 +260,19 @@ if (Platform.OS === 'web') {
                   onPress={procesarPago}
                   disabled={!validarFormulario() || loading}
                 >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.textoBotonModal}>Confirmar Pago</Text>
-                  )}
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.textoBotonModal}>Confirmar Pago</Text>}
                 </TouchableOpacity>
               </View>
+
+              <TouchableOpacity 
+                style={[styles.botonModal, styles.botonMasTarde]}
+                onPress={() => {
+                  setModalVisible(false);
+                  navigation.navigate('Reservas', { reserva });
+                }}
+              >
+                <Text style={styles.textoBotonModal}>Pagar Más Tarde</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -371,6 +352,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
+  botonMasTarde: {
+    backgroundColor: '#3498DB',
+    marginTop: 10,
+  },
   botonTexto: {
     color: '#FFF',
     fontWeight: '700',
@@ -440,6 +425,12 @@ const styles = StyleSheet.create({
   },
   botonConfirmar: {
     backgroundColor: '#2ECC71',
+  },
+  botonMasTardeModal: {
+    backgroundColor: '#3498DB',
+    marginTop: 15,
+    alignSelf: 'center',
+    width: '100%',
   },
   botonDisabled: {
     backgroundColor: '#A9DFBF',
