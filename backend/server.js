@@ -44,11 +44,13 @@ const loginRuta = require('./rutas/login');
 const registroRuta = require('./rutas/registro');
 const pistasRuta = require('./rutas/pistas');
 const reservasRuta = require('./rutas/reservas');
+const polideportivosRuta = require('./rutas/polideportivos');
 
 app.use('/login', loginRuta);
 app.use('/registro', registroRuta);
 app.use('/pistas', pistasRuta);
 app.use('/reservas', reservasRuta);
+app.use('/polideportivos', polideportivosRuta);
 
 // Ruta de prueba para verificar que el servidor está activo
 app.get('/', (req, res) => {
