@@ -124,8 +124,13 @@ export default function FormularioReserva({ navigation }) {
     : 0;
 
   const handleSubmit = async () => {
-    if (!form.polideportivo || !form.pista || !form.fecha) {
-      Alert.alert('Error', 'Por favor completa todos los campos');
+    if (!form.polideportivo || !form.pista || !form.fecha || !form.horaInicio || !form.horaFin) {
+      Alert.alert('Error', 'Por favor completa todos los campos obligatorios');
+      return;
+    }
+
+    if (!dni) {
+      Alert.alert('Error', 'DNI del usuario no disponible');
       return;
     }
 
@@ -151,25 +156,39 @@ export default function FormularioReserva({ navigation }) {
         return;
       }
 
+      // DATOS CORREGIDOS - Usando los nombres que espera el backend
+      const reservaData = {
+        dni_usuario: dni,
+        nombre_usuario: nombre || 'Usuario',
+        pista_id: parseInt(form.pista), // CAMBIADO: pista → pista_id
+        fecha: form.fecha,
+        hora_inicio: form.horaInicio,
+        hora_fin: form.horaFin,
+        ludoteca: form.ludoteca,
+        estado: 'pendiente',
+        id_polideportivo: parseInt(form.polideportivo)
+      };
+
+      console.log('📤 DATOS CORREGIDOS PARA BACKEND:', reservaData);
+
       const res = await fetch('http://localhost:3001/reservas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dni_usuario: dni,
-          nombre_usuario: nombre,
-          pista: form.pista,
-          fecha: form.fecha,
-          hora_inicio: form.horaInicio,
-          hora_fin: form.horaFin,
-          ludoteca: form.ludoteca,
-          estado: 'pendiente',
-          id_polideportivo: form.polideportivo,
-        }),
+        body: JSON.stringify(reservaData),
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al crear la reserva');
+      
+      if (!res.ok) {
+        console.error('❌ ERROR DEL SERVIDOR:', data);
+        throw new Error(data.error || 'Error al crear la reserva');
+      }
 
+      if (!data.success) {
+        throw new Error(data.message || 'Error al crear la reserva');
+      }
+
+      // Crear objeto reserva para mostrar en el frontend
       const reserva = {
         id: data.data?.id || null,
         dni_usuario: dni,
@@ -188,8 +207,9 @@ export default function FormularioReserva({ navigation }) {
 
       setReservaCreada(reserva);
       navigation.navigate('ResumenReserva', { reserva });
+      
     } catch (error) {
-      console.error('Error creating reservation:', error);
+      console.error('💥 ERROR:', error);
       Alert.alert('Error', error.message || 'Ocurrió un error al crear la reserva');
     } finally {
       setLoading(false);
@@ -344,9 +364,9 @@ export default function FormularioReserva({ navigation }) {
       )}
 
       <TouchableOpacity
-        style={[styles.boton, (loading || !form.pista || !form.fecha) && styles.botonDisabled]}
+        style={[styles.boton, (loading || !form.pista || !form.fecha || !form.horaInicio || !form.horaFin) && styles.botonDisabled]}
         onPress={handleSubmit}
-        disabled={loading || !form.pista || !form.fecha}
+        disabled={loading || !form.pista || !form.fecha || !form.horaInicio || !form.horaFin}
       >
         {loading ? (
           <ActivityIndicator color="#fff" />

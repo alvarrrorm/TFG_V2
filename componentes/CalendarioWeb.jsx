@@ -1,10 +1,16 @@
 import React from 'react';
 import DatePicker from 'react-datepicker';
+import { registerLocale } from 'react-datepicker';
+import es from 'date-fns/locale/es'; // Importar el locale español
 import 'react-datepicker/dist/react-datepicker.css';
 import './CalendarioWeb.css'; // Importamos los estilos CSS
 
+// Registrar el locale español
+registerLocale('es', es);
+
 export default function CalendarioWeb({ selectedDate, onChangeDate }) {
   const isValidDate = (dateString) => {
+    if (!dateString) return false;
     const date = new Date(dateString);
     return !isNaN(date.getTime());
   };
@@ -35,7 +41,7 @@ export default function CalendarioWeb({ selectedDate, onChangeDate }) {
         dateFormat="yyyy-MM-dd"
         placeholderText="Selecciona una fecha"
         className="custom-datepicker"
-        locale="es"
+        locale="es" // Ahora sí funcionará porque está registrado
         calendarClassName="custom-calendar"
         dayClassName={getDayClassName}
         popperClassName="custom-popper"

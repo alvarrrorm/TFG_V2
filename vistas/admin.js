@@ -16,6 +16,7 @@ import {
   RefreshControl,
   useWindowDimensions,
   Modal,
+  StatusBar,
 } from 'react-native';
 import { useUser } from '../contexto/UserContex';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -58,7 +59,10 @@ export default function AdminPanel({ navigation }) {
   const [modalPolideportivoVisible, setModalPolideportivoVisible] = useState(false);
   const [nuevoPolideportivoNombre, setNuevoPolideportivoNombre] = useState('');
   const [nuevoPolideportivoDireccion, setNuevoPolideportivoDireccion] = useState('');
-const [nuevoPolideportivoTelefono, setNuevoPolideportivoTelefono] = useState('');
+  const [nuevoPolideportivoTelefono, setNuevoPolideportivoTelefono] = useState('');
+
+  // Estados para hover effects
+  const [isHoveredBack, setIsHoveredBack] = useState(false);
 
   // Cargar pistas, reservas y polideportivos desde la API
   const fetchData = useCallback(async () => {
@@ -189,52 +193,52 @@ const [nuevoPolideportivoTelefono, setNuevoPolideportivoTelefono] = useState('')
     }
   };
 
-// Agregar nuevo polideportivo
-const agregarPolideportivo = async () => {
-  if (!nuevoPolideportivoNombre.trim() || !nuevoPolideportivoDireccion.trim()) {
-    Alert.alert('Error', 'Nombre y dirección son obligatorios');
-    return;
-  }
-
-  try {
-    const response = await fetch(POLIDEPORTIVOS_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        nombre: nuevoPolideportivoNombre.trim(),
-        direccion: nuevoPolideportivoDireccion.trim(),
-        telefono: nuevoPolideportivoTelefono.trim() || null,
-      }),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
-      throw new Error(responseData.error || `Error ${response.status}`);
+  // Agregar nuevo polideportivo
+  const agregarPolideportivo = async () => {
+    if (!nuevoPolideportivoNombre.trim() || !nuevoPolideportivoDireccion.trim()) {
+      Alert.alert('Error', 'Nombre y dirección son obligatorios');
+      return;
     }
 
-    setPolideportivos((prevPolideportivos) => [...prevPolideportivos, responseData.data]);
-    
-    // Actualizar dropdown de polideportivos
-    const nuevoItem = {
-      label: responseData.data.nombre,
-      value: responseData.data.id
-    };
-    setPolideportivosItems(prev => [...prev, nuevoItem]);
-    
-    // Limpiar formulario
-    setNuevoPolideportivoNombre('');
-    setNuevoPolideportivoDireccion('');
-    setNuevoPolideportivoTelefono('');
-    setModalPolideportivoVisible(false);
-    Alert.alert('Éxito', 'Polideportivo agregado correctamente');
-  } catch (error) {
-    console.error('Error al agregar polideportivo:', error);
-    Alert.alert('Error', error.message || 'No se pudo agregar el polideportivo');
-  }
-};
+    try {
+      const response = await fetch(POLIDEPORTIVOS_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nombre: nuevoPolideportivoNombre.trim(),
+          direccion: nuevoPolideportivoDireccion.trim(),
+          telefono: nuevoPolideportivoTelefono.trim() || null,
+        }),
+      });
+
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(responseData.error || `Error ${response.status}`);
+      }
+
+      setPolideportivos((prevPolideportivos) => [...prevPolideportivos, responseData.data]);
+      
+      // Actualizar dropdown de polideportivos
+      const nuevoItem = {
+        label: responseData.data.nombre,
+        value: responseData.data.id
+      };
+      setPolideportivosItems(prev => [...prev, nuevoItem]);
+      
+      // Limpiar formulario
+      setNuevoPolideportivoNombre('');
+      setNuevoPolideportivoDireccion('');
+      setNuevoPolideportivoTelefono('');
+      setModalPolideportivoVisible(false);
+      Alert.alert('Éxito', 'Polideportivo agregado correctamente');
+    } catch (error) {
+      console.error('Error al agregar polideportivo:', error);
+      Alert.alert('Error', error.message || 'No se pudo agregar el polideportivo');
+    }
+  };
 
   // Eliminar polideportivo
   const eliminarPolideportivo = (id) => {
@@ -441,7 +445,7 @@ const agregarPolideportivo = async () => {
     }
   };
 
-  // Función para obtener el nombre del polideportivo - ACTUALIZADA
+  // Función para obtener el nombre del polideportivo
   const obtenerNombrePolideportivo = (polideportivoId) => {
     const polideportivo = polideportivos.find(p => p.id === polideportivoId);
     return polideportivo ? polideportivo.nombre : 'Desconocido';
@@ -501,7 +505,7 @@ const agregarPolideportivo = async () => {
     </View>
   );
 
-  // Renderizado de pistas (actualizado para mostrar polideportivo)
+  // Renderizado de pistas
   const renderPistaItem = ({ item }) => (
     <View style={[
       styles.pistaCard, 
@@ -608,7 +612,7 @@ const agregarPolideportivo = async () => {
     </View>
   );
 
-  // Renderizado de reservas (actualizado para mostrar información completa)
+  // Renderizado de reservas
   const renderReservaItem = ({ item }) => (
     <View style={[
       styles.reservaCard, 
@@ -732,6 +736,296 @@ const agregarPolideportivo = async () => {
     </View>
   );
 
+  // Contenido principal que se mostrará en el FlatList
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'polideportivos':
+        return (
+          <View style={styles.tabContent}>
+            <View style={styles.listHeader}>
+              <View style={styles.seccionHeader}>
+                <Text style={[
+                  styles.seccionTitulo, 
+                  isLargeScreen && styles.seccionTituloLarge,
+                  isSmallScreen && styles.seccionTituloSmall
+                ]}>
+                  Polideportivos ({polideportivos.length})
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.botonAgregar,
+                    isLargeScreen && styles.botonAgregarLarge,
+                    isSmallScreen && styles.botonAgregarSmall
+                  ]}
+                  onPress={() => setModalPolideportivoVisible(true)}
+                >
+                  <Text style={[
+                    styles.botonAgregarTexto, 
+                    isLargeScreen && styles.botonAgregarTextoLarge,
+                    isSmallScreen && styles.botonAgregarTextoSmall
+                  ]}>
+                    Agregar
+                  </Text>
+                  <Ionicons 
+                    name="add-circle-outline" 
+                    size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+                    color="white" 
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            {polideportivos.length === 0 ? (
+              <View style={styles.listaVaciaContainer}>
+                <Text style={[
+                  styles.listaVacia, 
+                  isLargeScreen && styles.listaVaciaLarge,
+                  isSmallScreen && styles.listaVaciaSmall
+                ]}>
+                  No hay polideportivos registrados
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.botonAgregar,
+                    isLargeScreen && styles.botonAgregarLarge,
+                    isSmallScreen && styles.botonAgregarSmall
+                  ]}
+                  onPress={() => setModalPolideportivoVisible(true)}
+                >
+                  <Text style={[
+                    styles.botonAgregarTexto, 
+                    isLargeScreen && styles.botonAgregarTextoLarge,
+                    isSmallScreen && styles.botonAgregarTextoSmall
+                  ]}>
+                    Agregar Primer Polideportivo
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.listContent}>
+                {polideportivos.map((item) => (
+                  <View key={item.id.toString()}>
+                    {renderPolideportivoItem({ item })}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        );
+
+      case 'pistas':
+        return (
+          <View style={styles.tabContent}>
+            <View style={[
+              styles.formularioContainer, 
+              isLargeScreen && styles.formularioContainerLarge,
+              isSmallScreen && styles.formularioContainerSmall
+            ]}>
+              <Text style={[
+                styles.seccionTitulo, 
+                isLargeScreen && styles.seccionTituloLarge,
+                isSmallScreen && styles.seccionTituloSmall
+              ]}>
+                Agregar Nueva Pista
+              </Text>
+
+              <TextInput
+                style={[
+                  styles.input, 
+                  isLargeScreen && styles.inputLarge,
+                  isSmallScreen && styles.inputSmall
+                ]}
+                placeholder="Nombre de la pista"
+                value={nuevoNombre}
+                onChangeText={text => {
+                  setNuevoNombre(text);
+                  setErrorNombreRepetido('');
+                }}
+                placeholderTextColor="#999"
+              />
+              {errorNombreRepetido ? (
+                <Text style={[
+                  styles.errorTexto, 
+                  isLargeScreen && styles.errorTextoLarge,
+                  isSmallScreen && styles.errorTextoSmall
+                ]}>
+                  {errorNombreRepetido}
+                </Text>
+              ) : null}
+
+              <DropDownPicker
+                open={open}
+                value={nuevoTipo}
+                items={items}
+                setOpen={setOpen}
+                setValue={setNuevoTipo}
+                setItems={setItems}
+                placeholder="Seleccionar tipo"
+                style={[
+                  styles.dropdown, 
+                  isLargeScreen && styles.dropdownLarge,
+                  isSmallScreen && styles.dropdownSmall
+                ]}
+                dropDownContainerStyle={[
+                  styles.dropdownContainer, 
+                  isLargeScreen && styles.dropdownContainerLarge,
+                  isSmallScreen && styles.dropdownContainerSmall
+                ]}
+                zIndex={3000}
+                zIndexInverse={1000}
+              />
+
+              <DropDownPicker
+                open={openPolideportivo}
+                value={nuevoPolideportivo}
+                items={polideportivosItems}
+                setOpen={setOpenPolideportivo}
+                setValue={setNuevoPolideportivo}
+                setItems={setPolideportivosItems}
+                placeholder="Seleccionar polideportivo"
+                style={[
+                  styles.dropdown, 
+                  isLargeScreen && styles.dropdownLarge,
+                  isSmallScreen && styles.dropdownSmall
+                ]}
+                dropDownContainerStyle={[
+                  styles.dropdownContainer, 
+                  isLargeScreen && styles.dropdownContainerLarge,
+                  isSmallScreen && styles.dropdownContainerSmall
+                ]}
+                zIndex={2000}
+                zIndexInverse={2000}
+              />
+
+              <TextInput
+                style={[
+                  styles.input, 
+                  isLargeScreen && styles.inputLarge,
+                  isSmallScreen && styles.inputSmall
+                ]}
+                placeholder="Precio por hora (€)"
+                value={nuevoPrecio}
+                onChangeText={setNuevoPrecio}
+                keyboardType="numeric"
+                placeholderTextColor="#999"
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.botonAgregar,
+                  (!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo) && styles.botonDisabled,
+                  isLargeScreen && styles.botonAgregarLarge,
+                  isSmallScreen && styles.botonAgregarSmall
+                ]}
+                onPress={agregarPista}
+                disabled={!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo}
+              >
+                <Text style={[
+                  styles.botonAgregarTexto, 
+                  isLargeScreen && styles.botonAgregarTextoLarge,
+                  isSmallScreen && styles.botonAgregarTextoSmall
+                ]}>
+                  Agregar Pista
+                </Text>
+                <Ionicons 
+                  name="add-circle-outline" 
+                  size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+                  color="white" 
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={[
+              styles.listaContainer, 
+              isLargeScreen && styles.listaContainerLarge,
+              isSmallScreen && styles.listaContainerSmall
+            ]}>
+              <Text style={[
+                styles.seccionTitulo, 
+                isLargeScreen && styles.seccionTituloLarge,
+                isSmallScreen && styles.seccionTituloSmall
+              ]}>
+                Pistas Disponibles ({pistas.length})
+              </Text>
+
+              {pistas.length === 0 ? (
+                <View style={styles.listaVaciaContainer}>
+                  <Text style={[
+                    styles.listaVacia, 
+                    isLargeScreen && styles.listaVaciaLarge,
+                    isSmallScreen && styles.listaVaciaSmall
+                  ]}>
+                    No hay pistas registradas
+                  </Text>
+                  <Text style={styles.listaVaciaSubtexto}>
+                    Agrega tu primera pista usando el formulario superior
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.listContent}>
+                  {sections.map((section, index) => (
+                    <View key={`section-${index}`}>
+                      {renderSectionHeader({ section: { title: section.title } })}
+                      {section.data.map((pista) => (
+                        <View key={pista.id}>
+                          {renderPistaItem({ item: pista })}
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+        );
+
+      case 'reservas':
+        return (
+          <View style={styles.tabContent}>
+            <View style={[
+              styles.listaContainer, 
+              isLargeScreen && styles.listaContainerLarge,
+              isSmallScreen && styles.listaContainerSmall
+            ]}>
+              <Text style={[
+                styles.seccionTitulo, 
+                isLargeScreen && styles.seccionTituloLarge,
+                isSmallScreen && styles.seccionTituloSmall
+              ]}>
+                Reservas Activas ({reservas.length})
+              </Text>
+            </View>
+            
+            {reservas.length === 0 ? (
+              <View style={styles.listaVaciaContainer}>
+                <Text style={[
+                  styles.listaVacia, 
+                  isLargeScreen && styles.listaVaciaLarge,
+                  isSmallScreen && styles.listaVaciaSmall
+                ]}>
+                  No hay reservas activas
+                </Text>
+                <Text style={styles.listaVaciaSubtexto}>
+                  Las reservas aparecerán aquí cuando los usuarios realicen reservas
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.listContent}>
+                {reservas.map((item) => (
+                  <View key={item.id.toString()}>
+                    {renderReservaItem({ item })}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -743,7 +1037,9 @@ const agregarPolideportivo = async () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Modal para editar precio */}
+      <StatusBar barStyle="light-content" />
+      
+      {/* Modales (mantener igual) */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -801,472 +1097,201 @@ const agregarPolideportivo = async () => {
         </View>
       </Modal>
 
-      {/* Modal para agregar polideportivo */}
-<Modal
-  animationType="slide"
-  transparent={true}
-  visible={modalPolideportivoVisible}
-  onRequestClose={() => setModalPolideportivoVisible(false)}
->
-  <View style={styles.modalContainer}>
-    <View style={[
-      styles.modalContent, 
-      isLargeScreen && styles.modalContentLarge,
-      isSmallScreen && styles.modalContentSmall
-    ]}>
-      <Text style={[
-        styles.modalTitle, 
-        isLargeScreen && styles.modalTitleLarge,
-        isSmallScreen && styles.modalTitleSmall
-      ]}>
-        Agregar Polideportivo
-      </Text>
-      
-      <TextInput
-        style={[
-          styles.modalInput, 
-          isLargeScreen && styles.modalInputLarge,
-          isSmallScreen && styles.modalInputSmall
-        ]}
-        placeholder="Nombre del polideportivo"
-        value={nuevoPolideportivoNombre}
-        onChangeText={setNuevoPolideportivoNombre}
-        placeholderTextColor="#999"
-      />
-      
-      <TextInput
-        style={[
-          styles.modalInput, 
-          isLargeScreen && styles.modalInputLarge,
-          isSmallScreen && styles.modalInputSmall
-        ]}
-        placeholder="Dirección"
-        value={nuevoPolideportivoDireccion}
-        onChangeText={setNuevoPolideportivoDireccion}
-        placeholderTextColor="#999"
-      />
-
-      {/* Añadir este TextInput para el teléfono */}
-      <TextInput
-        style={[
-          styles.modalInput, 
-          isLargeScreen && styles.modalInputLarge,
-          isSmallScreen && styles.modalInputSmall
-        ]}
-        placeholder="Teléfono (opcional)"
-        value={nuevoPolideportivoTelefono}
-        onChangeText={setNuevoPolideportivoTelefono}
-        placeholderTextColor="#999"
-        keyboardType="phone-pad"
-      />
-      
-      <View style={styles.modalButtons}>
-        <TouchableOpacity
-          style={[styles.modalButton, styles.modalButtonCancel]}
-          onPress={() => setModalPolideportivoVisible(false)}
-        >
-          <Text style={styles.modalButtonText}>Cancelar</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modalButton, styles.modalButtonSave]}
-          onPress={agregarPolideportivo}
-        >
-          <Text style={styles.modalButtonText}>Guardar</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  </View>
-</Modal>
-
-      <View style={[
-        styles.header, 
-        isLargeScreen && styles.headerLarge,
-        isSmallScreen && styles.headerSmall
-      ]}>
-        <Text style={[
-          styles.titulo, 
-          isLargeScreen && styles.tituloLarge,
-          isSmallScreen && styles.tituloSmall
-        ]}>
-          Panel de Administración
-        </Text>
-        <Text style={[
-          styles.subtitulo, 
-          isLargeScreen && styles.subtituloLarge,
-          isSmallScreen && styles.subtituloSmall
-        ]}>
-          Bienvenido, {usuario?.nombre || 'Administrador'}
-        </Text>
-        
-        <View style={[
-          styles.tabsContainer, 
-          isLargeScreen && styles.tabsContainerLarge,
-          isSmallScreen && styles.tabsContainerSmall
-        ]}>
-          <TouchableOpacity
-            style={[
-              styles.tabButton, 
-              activeTab === 'polideportivos' && styles.activeTab,
-              isLargeScreen && styles.tabButtonLarge,
-              isSmallScreen && styles.tabButtonSmall
-            ]}
-            onPress={() => setActiveTab('polideportivos')}
-          >
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalPolideportivoVisible}
+        onRequestClose={() => setModalPolideportivoVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[
+            styles.modalContent, 
+            isLargeScreen && styles.modalContentLarge,
+            isSmallScreen && styles.modalContentSmall
+          ]}>
             <Text style={[
-              styles.tabText, 
-              activeTab === 'polideportivos' && styles.activeTabText,
-              isLargeScreen && styles.tabTextLarge,
-              isSmallScreen && styles.tabTextSmall
+              styles.modalTitle, 
+              isLargeScreen && styles.modalTitleLarge,
+              isSmallScreen && styles.modalTitleSmall
             ]}>
-              Polideportivos
+              Agregar Polideportivo
             </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[
-              styles.tabButton, 
-              activeTab === 'pistas' && styles.activeTab,
-              isLargeScreen && styles.tabButtonLarge,
-              isSmallScreen && styles.tabButtonSmall
-            ]}
-            onPress={() => setActiveTab('pistas')}
-          >
-            <Text style={[
-              styles.tabText, 
-              activeTab === 'pistas' && styles.activeTabText,
-              isLargeScreen && styles.tabTextLarge,
-              isSmallScreen && styles.tabTextSmall
-            ]}>
-              Pistas
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[
-              styles.tabButton, 
-              activeTab === 'reservas' && styles.activeTab,
-              isLargeScreen && styles.tabButtonLarge,
-              isSmallScreen && styles.tabButtonSmall
-            ]}
-            onPress={() => setActiveTab('reservas')}
-          >
-            <Text style={[
-              styles.tabText, 
-              activeTab === 'reservas' && styles.activeTabText,
-              isLargeScreen && styles.tabTextLarge,
-              isSmallScreen && styles.tabTextSmall
-            ]}>
-              Reservas
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            
+            <TextInput
+              style={[
+                styles.modalInput, 
+                isLargeScreen && styles.modalInputLarge,
+                isSmallScreen && styles.modalInputSmall
+              ]}
+              placeholder="Nombre del polideportivo"
+              value={nuevoPolideportivoNombre}
+              onChangeText={setNuevoPolideportivoNombre}
+              placeholderTextColor="#999"
+            />
+            
+            <TextInput
+              style={[
+                styles.modalInput, 
+                isLargeScreen && styles.modalInputLarge,
+                isSmallScreen && styles.modalInputSmall
+              ]}
+              placeholder="Dirección"
+              value={nuevoPolideportivoDireccion}
+              onChangeText={setNuevoPolideportivoDireccion}
+              placeholderTextColor="#999"
+            />
 
-      {activeTab === 'polideportivos' ? (
-        <FlatList
-          data={polideportivos}
-          renderItem={renderPolideportivoItem}
-          keyExtractor={(item) => item.id.toString()}
-          refreshing={refreshing}
-          onRefresh={fetchData}
-          ListHeaderComponent={
-            <View style={[
-              styles.listaContainer, 
-              isLargeScreen && styles.listaContainerLarge,
-              isSmallScreen && styles.listaContainerSmall
-            ]}>
-              <View style={styles.seccionHeader}>
-                <Text style={[
-                  styles.seccionTitulo, 
-                  isLargeScreen && styles.seccionTituloLarge,
-                  isSmallScreen && styles.seccionTituloSmall
-                ]}>
-                  Polideportivos ({polideportivos.length})
-                </Text>
-                <TouchableOpacity
-                  style={[
-                    styles.botonAgregar,
-                    isLargeScreen && styles.botonAgregarLarge,
-                    isSmallScreen && styles.botonAgregarSmall
-                  ]}
-                  onPress={() => setModalPolideportivoVisible(true)}
-                >
-                  <Text style={[
-                    styles.botonAgregarTexto, 
-                    isLargeScreen && styles.botonAgregarTextoLarge,
-                    isSmallScreen && styles.botonAgregarTextoSmall
-                  ]}>
-                    Agregar
-                  </Text>
-                  <Ionicons 
-                    name="add-circle-outline" 
-                    size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
-                    color="white" 
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.listaVaciaContainer}>
-              <Text style={[
-                styles.listaVacia, 
-                isLargeScreen && styles.listaVaciaLarge,
-                isSmallScreen && styles.listaVaciaSmall
-              ]}>
-                No hay polideportivos registrados
-              </Text>
+            <TextInput
+              style={[
+                styles.modalInput, 
+                isLargeScreen && styles.modalInputLarge,
+                isSmallScreen && styles.modalInputSmall
+              ]}
+              placeholder="Teléfono (opcional)"
+              value={nuevoPolideportivoTelefono}
+              onChangeText={setNuevoPolideportivoTelefono}
+              placeholderTextColor="#999"
+              keyboardType="phone-pad"
+            />
+            
+            <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[
-                  styles.botonAgregar,
-                  isLargeScreen && styles.botonAgregarLarge,
-                  isSmallScreen && styles.botonAgregarSmall
-                ]}
-                onPress={() => setModalPolideportivoVisible(true)}
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setModalPolideportivoVisible(false)}
               >
-                <Text style={[
-                  styles.botonAgregarTexto, 
-                  isLargeScreen && styles.botonAgregarTextoLarge,
-                  isSmallScreen && styles.botonAgregarTextoSmall
-                ]}>
-                  Agregar Primer Polideportivo
-                </Text>
+                <Text style={styles.modalButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonSave]}
+                onPress={agregarPolideportivo}
+              >
+                <Text style={styles.modalButtonText}>Guardar</Text>
               </TouchableOpacity>
             </View>
-          }
-          contentContainerStyle={[
-            styles.reservasContentContainer,
-            isLargeScreen && styles.reservasContentContainerLarge,
-            isSmallScreen && styles.reservasContentContainerSmall
-          ]}
-        />
-      ) : activeTab === 'pistas' ? (
-        <ScrollView 
-          style={[
-            styles.scrollContainer, 
-            isLargeScreen && styles.scrollContainerLarge,
-            isSmallScreen && styles.scrollContainerSmall
-          ]}
-          contentContainerStyle={styles.scrollContentContainer}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={fetchData}
-            />
-          }
-        >
-          <View style={[
-            styles.formularioContainer, 
-            isLargeScreen && styles.formularioContainerLarge,
-            isSmallScreen && styles.formularioContainerSmall
-          ]}>
-            <Text style={[
-              styles.seccionTitulo, 
-              isLargeScreen && styles.seccionTituloLarge,
-              isSmallScreen && styles.seccionTituloSmall
-            ]}>
-              Agregar Nueva Pista
-            </Text>
-
-            <TextInput
-              style={[
-                styles.input, 
-                isLargeScreen && styles.inputLarge,
-                isSmallScreen && styles.inputSmall
-              ]}
-              placeholder="Nombre de la pista"
-              value={nuevoNombre}
-              onChangeText={text => {
-                setNuevoNombre(text);
-                setErrorNombreRepetido('');
-              }}
-              placeholderTextColor="#999"
-            />
-            {errorNombreRepetido ? (
-              <Text style={[
-                styles.errorTexto, 
-                isLargeScreen && styles.errorTextoLarge,
-                isSmallScreen && styles.errorTextoSmall
-              ]}>
-                {errorNombreRepetido}
-              </Text>
-            ) : null}
-
-            <DropDownPicker
-              open={open}
-              value={nuevoTipo}
-              items={items}
-              setOpen={setOpen}
-              setValue={setNuevoTipo}
-              setItems={setItems}
-              placeholder="Seleccionar tipo"
-              style={[
-                styles.dropdown, 
-                isLargeScreen && styles.dropdownLarge,
-                isSmallScreen && styles.dropdownSmall
-              ]}
-              dropDownContainerStyle={[
-                styles.dropdownContainer, 
-                isLargeScreen && styles.dropdownContainerLarge,
-                isSmallScreen && styles.dropdownContainerSmall
-              ]}
-              zIndex={3000}
-              zIndexInverse={1000}
-              textStyle={[
-                isLargeScreen ? styles.dropdownTextLarge : null,
-                isSmallScreen ? styles.dropdownTextSmall : null
-              ]}
-            />
-
-            <DropDownPicker
-              open={openPolideportivo}
-              value={nuevoPolideportivo}
-              items={polideportivosItems}
-              setOpen={setOpenPolideportivo}
-              setValue={setNuevoPolideportivo}
-              setItems={setPolideportivosItems}
-              placeholder="Seleccionar polideportivo"
-              style={[
-                styles.dropdown, 
-                isLargeScreen && styles.dropdownLarge,
-                isSmallScreen && styles.dropdownSmall
-              ]}
-              dropDownContainerStyle={[
-                styles.dropdownContainer, 
-                isLargeScreen && styles.dropdownContainerLarge,
-                isSmallScreen && styles.dropdownContainerSmall
-              ]}
-              zIndex={2000}
-              zIndexInverse={2000}
-              textStyle={[
-                isLargeScreen ? styles.dropdownTextLarge : null,
-                isSmallScreen ? styles.dropdownTextSmall : null
-              ]}
-            />
-
-            <TextInput
-              style={[
-                styles.input, 
-                isLargeScreen && styles.inputLarge,
-                isSmallScreen && styles.inputSmall
-              ]}
-              placeholder="Precio por hora (€)"
-              value={nuevoPrecio}
-              onChangeText={setNuevoPrecio}
-              keyboardType="numeric"
-              placeholderTextColor="#999"
-            />
-
-            <TouchableOpacity
-              style={[
-                styles.botonAgregar,
-                (!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo) && styles.botonDisabled,
-                isLargeScreen && styles.botonAgregarLarge,
-                isSmallScreen && styles.botonAgregarSmall
-              ]}
-              onPress={agregarPista}
-              disabled={!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo}
-            >
-              <Text style={[
-                styles.botonAgregarTexto, 
-                isLargeScreen && styles.botonAgregarTextoLarge,
-                isSmallScreen && styles.botonAgregarTextoSmall
-              ]}>
-                Agregar Pista
-              </Text>
-              <Ionicons 
-                name="add-circle-outline" 
-                size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
-                color="white" 
-              />
-            </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
 
-          <View style={[
-            styles.listaContainer, 
-            isLargeScreen && styles.listaContainerLarge,
-            isSmallScreen && styles.listaContainerSmall
-          ]}>
-            <Text style={[
-              styles.seccionTitulo, 
-              isLargeScreen && styles.seccionTituloLarge,
-              isSmallScreen && styles.seccionTituloSmall
-            ]}>
-              Pistas Disponibles ({pistas.length})
-            </Text>
-
-            {pistas.length === 0 ? (
-              <View style={styles.listaVaciaContainer}>
-                <Text style={[
-                  styles.listaVacia, 
-                  isLargeScreen && styles.listaVaciaLarge,
-                  isSmallScreen && styles.listaVaciaSmall
+      {/* ESTRUCTURA IDÉNTICA AL SELECTOR - CON SCROLL FUNCIONAL */}
+      <FlatList
+        data={[]} // Datos vacíos ya que usamos ListHeaderComponent para todo
+        keyExtractor={(item, index) => index.toString()}
+        
+        // Header fijo con navegación + todo el contenido
+        ListHeaderComponent={
+          <>
+            {/* Header fijo igual al Selector */}
+            <View style={styles.header}>
+              <View style={styles.headerContent}>
+                <View style={styles.headerTop}>
+                  <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    style={[
+                      styles.backButton,
+                      isHoveredBack && styles.backButtonHovered
+                    ]}
+                    activeOpacity={0.8}
+                    onMouseEnter={() => Platform.OS === 'web' && setIsHoveredBack(true)}
+                    onMouseLeave={() => Platform.OS === 'web' && setIsHoveredBack(false)}
+                  >
+                    <Ionicons name="arrow-back" size={24} color="#fff" />
+                    <Text style={styles.backText}>Volver</Text>
+                  </TouchableOpacity>
+                  
+                  <Text style={styles.welcomeText}>Panel de Administración</Text>
+                </View>
+                
+                <Text style={styles.username}>Bienvenido, {usuario?.nombre || 'Administrador'}</Text>
+                
+                {/* Tabs de navegación */}
+                <View style={[
+                  styles.tabsContainer, 
+                  isLargeScreen && styles.tabsContainerLarge,
+                  isSmallScreen && styles.tabsContainerSmall
                 ]}>
-                  No hay pistas registradas
-                </Text>
-                <Text style={styles.listaVaciaSubtexto}>
-                  Agrega tu primera pista usando el formulario superior
-                </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton, 
+                      activeTab === 'polideportivos' && styles.activeTab,
+                      isLargeScreen && styles.tabButtonLarge,
+                      isSmallScreen && styles.tabButtonSmall
+                    ]}
+                    onPress={() => setActiveTab('polideportivos')}
+                  >
+                    <Text style={[
+                      styles.tabText, 
+                      activeTab === 'polideportivos' && styles.activeTabText,
+                      isLargeScreen && styles.tabTextLarge,
+                      isSmallScreen && styles.tabTextSmall
+                    ]}>
+                      Polideportivos
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton, 
+                      activeTab === 'pistas' && styles.activeTab,
+                      isLargeScreen && styles.tabButtonLarge,
+                      isSmallScreen && styles.tabButtonSmall
+                    ]}
+                    onPress={() => setActiveTab('pistas')}
+                  >
+                    <Text style={[
+                      styles.tabText, 
+                      activeTab === 'pistas' && styles.activeTabText,
+                      isLargeScreen && styles.tabTextLarge,
+                      isSmallScreen && styles.tabTextSmall
+                    ]}>
+                      Pistas
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton, 
+                      activeTab === 'reservas' && styles.activeTab,
+                      isLargeScreen && styles.tabButtonLarge,
+                      isSmallScreen && styles.tabButtonSmall
+                    ]}
+                    onPress={() => setActiveTab('reservas')}
+                  >
+                    <Text style={[
+                      styles.tabText, 
+                      activeTab === 'reservas' && styles.activeTabText,
+                      isLargeScreen && styles.tabTextLarge,
+                      isSmallScreen && styles.tabTextSmall
+                    ]}>
+                      Reservas
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            ) : (
-              <SectionList
-                sections={sections}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={renderPistaItem}
-                renderSectionHeader={renderSectionHeader}
-                stickySectionHeadersEnabled={false}
-              />
-            )}
-          </View>
-        </ScrollView>
-      ) : (
-        <FlatList
-          data={reservas}
-          renderItem={renderReservaItem}
-          keyExtractor={(item) => item.id.toString()}
-          refreshing={refreshing}
-          onRefresh={fetchData}
-          ListHeaderComponent={
-            <View style={[
-              styles.listaContainer, 
-              isLargeScreen && styles.listaContainerLarge,
-              isSmallScreen && styles.listaContainerSmall
-            ]}>
-              <Text style={[
-                styles.seccionTitulo, 
-                isLargeScreen && styles.seccionTituloLarge,
-                isSmallScreen && styles.seccionTituloSmall
-              ]}>
-                Reservas Activas ({reservas.length})
-              </Text>
             </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.listaVaciaContainer}>
-              <Text style={[
-                styles.listaVacia, 
-                isLargeScreen && styles.listaVaciaLarge,
-                isSmallScreen && styles.listaVaciaSmall
-              ]}>
-                No hay reservas activas
-              </Text>
-              <Text style={styles.listaVaciaSubtexto}>
-                Las reservas aparecerán aquí cuando los usuarios realicen reservas
-              </Text>
+
+            {/* Contenido principal */}
+            <View style={styles.content}>
+              {renderContent()}
             </View>
-          }
-          contentContainerStyle={[
-            styles.reservasContentContainer,
-            isLargeScreen && styles.reservasContentContainerLarge,
-            isSmallScreen && styles.reservasContentContainerSmall
-          ]}
-        />
-      )}
+          </>
+        }
+
+        renderItem={null} // No necesitamos renderizar items individuales
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={fetchData}
+          />
+        }
+        style={Platform.OS === 'web' ? { height: '100vh' } : {}}
+      />
     </SafeAreaView>
   );
 }
+
 const styles = StyleSheet.create({
-  // Contenedores principales
   container: {
     flex: 1,
     backgroundColor: '#F5F7FA',
@@ -1277,314 +1302,386 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F5F7FA',
   },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#7F8C8D',
+    textAlign: 'center',
+  },
 
-  // Header y navegación
+  // Header - RESPONSIVE
   header: {
-    marginBottom: 16,
-    padding: 20,
-    alignItems: 'center',
     backgroundColor: 'white',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingVertical: 16,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        paddingHorizontal: '10%',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+        paddingHorizontal: 20,
+      }
+    }),
     borderBottomWidth: 1,
     borderBottomColor: '#E1E8ED',
   },
-  headerLarge: {
-    paddingVertical: 30,
-    paddingHorizontal: 40,
+  headerContent: {
+    alignItems: 'center',
+    ...Platform.select({
+      web: {
+        maxWidth: 1200,
+        alignSelf: 'center',
+        width: '100%',
+      },
+    }),
   },
-  headerSmall: {
-    padding: 15,
-    marginBottom: 8,
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 12,
   },
-  titulo: {
-    fontSize: 24,
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3498DB',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  backButtonHovered: {
+    backgroundColor: '#2980B9',
+  },
+  backText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 6,
+  },
+  welcomeText: {
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#2C3E50',
     textAlign: 'center',
+    flex: 1,
+    ...Platform.select({
+      web: {
+        fontSize: 24,
+      },
+      small: {
+        fontSize: 20,
+      },
+    }),
   },
-  tituloLarge: {
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  tituloSmall: {
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  subtitulo: {
-    fontSize: 16,
+  username: {
+    fontSize: 14,
     color: '#7F8C8D',
-    marginTop: 4,
+    marginBottom: 16,
     textAlign: 'center',
   },
-  subtituloLarge: {
-    fontSize: 20,
-    marginTop: 8,
-  },
-  subtituloSmall: {
-    fontSize: 14,
-    marginTop: 2,
-  },
 
-  // Pestañas de navegación
+  // Tabs de navegación - RESPONSIVE
   tabsContainer: {
     flexDirection: 'row',
-    marginTop: 16,
-    borderRadius: 8,
+    borderRadius: 6,
     backgroundColor: '#E1E8ED',
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#D5DDE5',
-  },
-  tabsContainerLarge: {
-    marginTop: 24,
-    borderRadius: 12,
-    minWidth: 400,
-  },
-  tabsContainerSmall: {
-    marginTop: 8,
-    borderRadius: 6,
-    alignSelf: 'stretch',
+    width: '100%',
+    ...Platform.select({
+      web: {
+        maxWidth: 600,
+      },
+    }),
   },
   tabButton: {
     paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  tabButtonLarge: {
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-  },
-  tabButtonSmall: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    ...Platform.select({
+      web: {
+        paddingVertical: 12,
+      },
+      small: {
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+      },
+    }),
   },
   activeTab: {
     backgroundColor: '#3498DB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
   tabText: {
     fontWeight: '600',
     color: '#7F8C8D',
-    fontSize: 14,
-  },
-  tabTextLarge: {
-    fontSize: 16,
-  },
-  tabTextSmall: {
-    fontSize: 12,
+    fontSize: 13,
+    textAlign: 'center',
+    ...Platform.select({
+      web: {
+        fontSize: 14,
+      },
+      small: {
+        fontSize: 12,
+      },
+    }),
   },
   activeTabText: {
     color: 'white',
     fontWeight: '700',
   },
 
-  // Contenedores de scroll
-  scrollContainer: {
+  // Contenido principal - RESPONSIVE
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
+    ...Platform.select({
+      web: {
+        paddingHorizontal: '10%',
+      },
+      default: {
+        paddingHorizontal: 0,
+      }
+    }),
+  },
+  content: {
+    ...Platform.select({
+      web: {
+        maxWidth: 1200,
+        alignSelf: 'center',
+        width: '100%',
+      },
+      default: {
+        paddingHorizontal: 16,
+      }
+    }),
+  },
+  tabContent: {
     flex: 1,
   },
-  scrollContainerLarge: {
-    paddingHorizontal: 40,
-  },
-  scrollContainerSmall: {
-    paddingHorizontal: 8,
-  },
-  scrollContentContainer: {
-    paddingBottom: 32,
-  },
 
-  // Formularios
+  // Formularios - RESPONSIVE
   formularioContainer: {
     backgroundColor: 'white',
-    borderRadius: 14,
-    padding: 20,
+    borderRadius: 8,
+    padding: 16,
     margin: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 5,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+        marginHorizontal: 'auto',
+        marginVertical: 16,
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+        elevation: 3,
+      }
+    }),
     borderWidth: 1,
     borderColor: '#E1E8ED',
   },
   formularioContainerLarge: {
-    margin: 24,
-    padding: 30,
-    borderRadius: 18,
+    ...Platform.select({
+      web: {
+        padding: 24,
+      },
+      default: {
+        padding: 20,
+      }
+    }),
   },
   formularioContainerSmall: {
-    margin: 8,
     padding: 12,
-    borderRadius: 10,
   },
 
-  // Secciones y títulos
+  // Listas - RESPONSIVE
+  listHeader: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    margin: 16,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+        marginHorizontal: 'auto',
+        marginVertical: 16,
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+        elevation: 3,
+      }
+    }),
+    borderWidth: 1,
+    borderColor: '#E1E8ED',
+  },
+  listaContainer: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    margin: 16,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+        marginHorizontal: 'auto',
+        marginVertical: 16,
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+        elevation: 3,
+      }
+    }),
+  },
+  listContent: {
+    paddingHorizontal: 0,
+  },
+
+  // Secciones - RESPONSIVE
   seccionTitulo: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#34495E',
+    color: '#2C3E50',
     marginBottom: 16,
-  },
-  seccionTituloLarge: {
-    fontSize: 24,
-    marginBottom: 20,
-  },
-  seccionTituloSmall: {
-    fontSize: 16,
-    marginBottom: 12,
+    ...Platform.select({
+      web: {
+        fontSize: 20,
+      },
+      small: {
+        fontSize: 16,
+      },
+    }),
   },
   seccionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+    flexWrap: 'wrap',
   },
 
-  // Inputs y formularios
+  // Inputs - RESPONSIVE
   input: {
     borderWidth: 1,
     borderColor: '#BDC3C7',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
+    borderRadius: 6,
+    padding: 12,
+    marginBottom: 12,
     fontSize: 16,
     backgroundColor: '#FDFEFE',
     color: '#2C3E50',
+    ...Platform.select({
+      web: {
+        fontSize: 14,
+      },
+    }),
   },
   inputLarge: {
-    padding: 18,
-    fontSize: 18,
-    borderRadius: 12,
+    padding: 14,
   },
   inputSmall: {
     padding: 10,
     fontSize: 14,
-    borderRadius: 8,
   },
   errorTexto: {
     color: '#E74C3C',
     fontWeight: '600',
     marginBottom: 12,
-    fontSize: 14,
+    fontSize: 13,
     textAlign: 'center',
     backgroundColor: '#FDECEA',
     padding: 8,
-    borderRadius: 6,
-  },
-  errorTextoLarge: {
-    fontSize: 16,
-    padding: 12,
-  },
-  errorTextoSmall: {
-    fontSize: 12,
-    padding: 6,
+    borderRadius: 4,
   },
 
-  // Dropdowns
+  // Dropdowns - RESPONSIVE
   dropdown: {
     borderColor: '#BDC3C7',
     marginBottom: 16,
-    borderRadius: 10,
+    borderRadius: 6,
     backgroundColor: '#FDFEFE',
   },
   dropdownLarge: {
-    minHeight: 50,
-    borderRadius: 12,
+    minHeight: 48,
   },
   dropdownSmall: {
-    minHeight: 40,
-    borderRadius: 8,
+    minHeight: 42,
   },
   dropdownContainer: {
     borderColor: '#BDC3C7',
-    borderRadius: 10,
+    borderRadius: 6,
     backgroundColor: '#FDFEFE',
   },
-  dropdownContainerLarge: {
-    borderRadius: 12,
-  },
-  dropdownContainerSmall: {
-    borderRadius: 8,
-  },
-  dropdownTextLarge: {
-    fontSize: 18,
-  },
-  dropdownTextSmall: {
-    fontSize: 14,
-  },
 
-  // Botones
+  // Botones - RESPONSIVE
   botonAgregar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#3498DB',
-    borderRadius: 10,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  botonAgregarLarge: {
-    padding: 18,
-    borderRadius: 12,
-  },
-  botonAgregarSmall: {
-    padding: 10,
-    borderRadius: 8,
+    borderRadius: 6,
+    padding: 12,
+    marginTop: 8,
+    ...Platform.select({
+      web: {
+        padding: 14,
+        maxWidth: 300,
+        alignSelf: 'center',
+      },
+    }),
   },
   botonDisabled: {
     backgroundColor: '#A9CCE3',
-    shadowOpacity: 0,
-    elevation: 0,
   },
   botonAgregarTexto: {
     color: 'white',
     fontWeight: '700',
     marginRight: 8,
-    fontSize: 16,
-  },
-  botonAgregarTextoLarge: {
-    fontSize: 18,
-  },
-  botonAgregarTextoSmall: {
-    fontSize: 14,
+    fontSize: 15,
+    ...Platform.select({
+      web: {
+        fontSize: 16,
+      },
+      small: {
+        fontSize: 14,
+      },
+    }),
   },
 
-  // Listas y contenedores
-  listaContainer: {
-    backgroundColor: 'white',
-    borderRadius: 14,
-    padding: 20,
-    margin: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#E1E8ED',
-  },
-  listaContainerLarge: {
-    margin: 24,
-    padding: 30,
-    borderRadius: 18,
-  },
-  listaContainerSmall: {
-    margin: 8,
-    padding: 12,
-    borderRadius: 10,
+  // Estados vacíos
+  listaVaciaContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    ...Platform.select({
+      web: {
+        paddingVertical: 60,
+      },
+    }),
   },
   listaVacia: {
     textAlign: 'center',
@@ -1592,107 +1689,173 @@ const styles = StyleSheet.create({
     marginVertical: 20,
     fontSize: 16,
     fontStyle: 'italic',
+    ...Platform.select({
+      web: {
+        fontSize: 18,
+      },
+      small: {
+        fontSize: 14,
+      },
+    }),
   },
-  listaVaciaLarge: {
-    fontSize: 18,
-    marginVertical: 30,
-  },
-  listaVaciaSmall: {
+  listaVaciaSubtexto: {
+    textAlign: 'center',
+    color: '#7F8C8D',
+    marginTop: 8,
     fontSize: 14,
-    marginVertical: 15,
+    fontStyle: 'italic',
+    ...Platform.select({
+      small: {
+        fontSize: 12,
+      },
+    }),
   },
 
   // Section headers
   sectionHeader: {
     backgroundColor: '#F5F7FA',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 16,
     marginTop: 16,
     marginBottom: 8,
-    borderRadius: 8,
+    borderRadius: 6,
     borderLeftWidth: 4,
     borderLeftColor: '#3498DB',
-  },
-  sectionHeaderLarge: {
-    paddingVertical: 12,
-    marginTop: 20,
-    marginBottom: 12,
-    borderRadius: 12,
-    borderLeftWidth: 5,
-  },
-  sectionHeaderSmall: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    marginTop: 12,
-    marginBottom: 6,
-    borderRadius: 6,
-    borderLeftWidth: 3,
+    ...Platform.select({
+      web: {
+        marginHorizontal: 16,
+      },
+    }),
   },
   sectionHeaderText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#2C3E50',
-  },
-  sectionHeaderTextLarge: {
-    fontSize: 20,
-  },
-  sectionHeaderTextSmall: {
-    fontSize: 14,
+    ...Platform.select({
+      web: {
+        fontSize: 16,
+      },
+      small: {
+        fontSize: 14,
+      },
+    }),
   },
 
-  // Tarjetas de polideportivos
+  // Tarjetas - RESPONSIVE
   polideportivoCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    borderRadius: 6,
     padding: 16,
     marginBottom: 12,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        marginHorizontal: 16,
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 3,
+        elevation: 2,
+        marginHorizontal: 16,
+      }
+    }),
     borderWidth: 1,
     borderColor: '#ECF0F1',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
   },
-  polideportivoCardLarge: {
-    padding: 20,
-    borderRadius: 12,
+  pistaCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    padding: 16,
+    marginBottom: 12,
+    ...Platform.select({
+      web: {
+        marginHorizontal: 16,
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+      },
+      default: {
+        marginHorizontal: 16,
+      }
+    }),
+    borderWidth: 1,
+    borderColor: '#ECF0F1',
+  },
+  reservaCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    padding: 16,
     marginBottom: 16,
+    ...Platform.select({
+      web: {
+        marginHorizontal: 16,
+        maxWidth: 800,
+        alignSelf: 'center',
+        width: '100%',
+      },
+      default: {
+        marginHorizontal: 16,
+      }
+    }),
+    borderWidth: 1,
+    borderColor: '#ECF0F1',
   },
-  polideportivoCardSmall: {
-    padding: 12,
-    marginBottom: 8,
-    borderRadius: 8,
-  },
+
+  // Contenido de tarjetas - RESPONSIVE
   polideportivoHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  polideportivoInfo: {
+    flex: 1,
+    minWidth: 200,
   },
   polideportivoNombre: {
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    flex: 1,
-  },
-  polideportivoNombreLarge: {
-    fontSize: 20,
-  },
-  polideportivoNombreSmall: {
-    fontSize: 14,
+    ...Platform.select({
+      web: {
+        fontSize: 17,
+      },
+      small: {
+        fontSize: 15,
+      },
+    }),
   },
   polideportivoDireccion: {
     fontSize: 14,
     color: '#7F8C8D',
     marginTop: 4,
-    flex: 1,
+    ...Platform.select({
+      small: {
+        fontSize: 13,
+      },
+    }),
+  },
+  polideportivoTelefono: {
+    fontSize: 14,
+    color: '#7F8C8D',
+    marginTop: 2,
+    ...Platform.select({
+      small: {
+        fontSize: 13,
+      },
+    }),
   },
   pistasCountContainer: {
     backgroundColor: '#E1E8ED',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 4,
     marginLeft: 8,
   },
   pistasCount: {
@@ -1701,185 +1864,110 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Tarjetas de pistas
-  pistaCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#ECF0F1',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  pistaCardLarge: {
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  pistaCardSmall: {
-    padding: 12,
-    marginBottom: 8,
-    borderRadius: 8,
-  },
   pistaHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  pistaInfo: {
+    flex: 1,
+    minWidth: 200,
   },
   pistaNombre: {
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    flex: 1,
+    ...Platform.select({
+      web: {
+        fontSize: 17,
+      },
+      small: {
+        fontSize: 15,
+      },
+    }),
   },
-  pistaNombreLarge: {
-    fontSize: 20,
-  },
-  pistaNombreSmall: {
-    fontSize: 14,
-  },
-  pistaPrecio: {
-    fontSize: 16,
-    color: '#2E7D32',
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  pistaInfo: {
+  pistaDetalles: {
     fontSize: 14,
     color: '#7F8C8D',
     marginTop: 4,
+    ...Platform.select({
+      small: {
+        fontSize: 13,
+      },
+    }),
   },
   estadoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginLeft: 8,
   },
-  estadoIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 6,
-  },
   estadoTexto: {
     fontSize: 14,
     color: '#7F8C8D',
     fontWeight: '500',
+    ...Platform.select({
+      small: {
+        fontSize: 13,
+      },
+    }),
   },
 
-  // Contenedores de acciones
+  // Acciones - RESPONSIVE
   accionesContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     marginTop: 10,
     flexWrap: 'wrap',
-  },
-  accionesContainerLarge: {
-    marginTop: 16,
+    gap: 8,
   },
   botonAccion: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#E1E8ED',
-    marginRight: 8,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  botonAccionLarge: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginRight: 12,
-    marginBottom: 12,
-  },
-  botonAccionSmall: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 6,
-    marginRight: 6,
-    marginBottom: 6,
-  },
-  botonEliminar: {
-    backgroundColor: '#FDECEA',
-    borderColor: '#F5B7B1',
-    borderWidth: 1,
-  },
-  botonCancelar: {
-    backgroundColor: '#FDECEA',
-    borderColor: '#F5B7B1',
-    borderWidth: 1,
-    alignSelf: 'flex-end',
+    borderRadius: 4,
+    backgroundColor: '#E1E8ED',
   },
   textoAccion: {
     marginLeft: 6,
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
     color: '#34495E',
-  },
-  textoAccionLarge: {
-    fontSize: 16,
-    marginLeft: 8,
-  },
-  textoAccionSmall: {
-    fontSize: 12,
-    marginLeft: 4,
+    ...Platform.select({
+      small: {
+        fontSize: 12,
+      },
+    }),
   },
   textoEliminar: {
     color: '#E74C3C',
   },
 
-  // Tarjetas de reservas
-  reservaCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#ECF0F1',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  reservaCardLarge: {
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  reservaCardSmall: {
-    padding: 12,
-    marginBottom: 12,
-    borderRadius: 8,
-  },
   reservaHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  reservaInfoPrincipal: {
+    flex: 1,
+    minWidth: 200,
   },
   reservaNombrePista: {
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    flex: 1,
-  },
-  reservaNombrePistaLarge: {
-    fontSize: 20,
-  },
-  reservaNombrePistaSmall: {
-    fontSize: 14,
+    ...Platform.select({
+      web: {
+        fontSize: 17,
+      },
+      small: {
+        fontSize: 15,
+      },
+    }),
   },
   reservaTipo: {
     fontSize: 12,
@@ -1887,20 +1975,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#E1E8ED',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 10,
+    borderRadius: 4,
     fontWeight: '600',
-  },
-  reservaTipoLarge: {
-    fontSize: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  reservaTipoSmall: {
-    fontSize: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 8,
+    ...Platform.select({
+      small: {
+        fontSize: 11,
+      },
+    }),
   },
   reservaInfo: {
     marginVertical: 8,
@@ -1910,33 +1991,28 @@ const styles = StyleSheet.create({
     color: '#7F8C8D',
     marginBottom: 4,
     lineHeight: 20,
-  },
-  reservaTextoLarge: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  reservaTextoSmall: {
-    fontSize: 12,
-    lineHeight: 18,
+    ...Platform.select({
+      small: {
+        fontSize: 13,
+        lineHeight: 18,
+      },
+    }),
   },
 
-  // Contenedores de contenido
-  reservasContentContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 40,
-  },
-  reservasContentContainerLarge: {
-    paddingHorizontal: 40,
-    alignSelf: 'center',
-    width: '80%',
-    maxWidth: 800,
-  },
-  reservasContentContainerSmall: {
+  // Estados
+  estadoReserva: {
     paddingHorizontal: 8,
-    paddingBottom: 20,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  estadoReservaTexto: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '600',
   },
 
-  // Modales
+  // Modales - RESPONSIVE
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1946,85 +2022,71 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 8,
     padding: 20,
     width: '90%',
     maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  modalContentLarge: {
-    padding: 30,
-    borderRadius: 16,
-    maxWidth: 500,
-  },
-  modalContentSmall: {
-    padding: 15,
-    width: '95%',
-    borderRadius: 10,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 5,
+      }
+    }),
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
     color: '#2C3E50',
     textAlign: 'center',
-  },
-  modalTitleLarge: {
-    fontSize: 24,
-    marginBottom: 15,
-  },
-  modalTitleSmall: {
-    fontSize: 18,
-    marginBottom: 8,
+    ...Platform.select({
+      web: {
+        fontSize: 20,
+      },
+    }),
   },
   modalPistaNombre: {
-    fontSize: 18,
+    fontSize: 16,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
     color: '#34495E',
     fontWeight: '600',
+  },
+  modalPolideportivoInfo: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+    color: '#7F8C8D',
+    fontStyle: 'italic',
   },
   modalInput: {
     borderWidth: 1,
     borderColor: '#BDC3C7',
-    borderRadius: 8,
+    borderRadius: 6,
     padding: 12,
     fontSize: 16,
     marginBottom: 20,
     backgroundColor: '#FDFEFE',
     color: '#2C3E50',
   },
-  modalInputLarge: {
-    padding: 16,
-    fontSize: 18,
-    borderRadius: 10,
-  },
-  modalInputSmall: {
-    padding: 10,
-    fontSize: 14,
-    borderRadius: 6,
-  },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 10,
+    gap: 10,
   },
   modalButton: {
-    borderRadius: 8,
+    borderRadius: 6,
     paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     flex: 1,
-    marginHorizontal: 5,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
   modalButtonCancel: {
     backgroundColor: '#E0E0E0',
@@ -2035,76 +2097,6 @@ const styles = StyleSheet.create({
   modalButtonText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 16,
-  },
-  
-loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#7F8C8D',
-    textAlign: 'center',
-  },
-  
-  polideportivoInfo: {
-    flex: 1,
-  },
-  
-  polideportivoTelefono: {
-    fontSize: 14,
-    color: '#7F8C8D',
-    marginTop: 2,
-  },
-  
-  pistaInfo: {
-    flex: 1,
-  },
-  
-  pistaDetalles: {
-    fontSize: 14,
-    color: '#7F8C8D',
-    marginTop: 4,
-  },
-  
-  reservaInfoPrincipal: {
-    flex: 1,
-  },
-  
-  estadoReserva: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    marginLeft: 8,
-  },
-  
-  estadoReservaTexto: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  
-  reservaLudoteca: {
-    color: '#E67E22',
-    fontWeight: '600',
-  },
-  
-  modalPolideportivoInfo: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 20,
-    color: '#7F8C8D',
-    fontStyle: 'italic',
-  },
-  
-  listaVaciaContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  
-  listaVaciaSubtexto: {
-    textAlign: 'center',
-    color: '#7F8C8D',
-    marginTop: 8,
-    fontSize: 14,
-    fontStyle: 'italic',
+    fontSize: 15,
   },
 });

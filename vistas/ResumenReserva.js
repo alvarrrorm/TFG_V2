@@ -54,9 +54,10 @@ export default function ResumenReserva({ route, navigation }) {
     setLoading(true);
 
     try {
-      console.log('Enviando pago para reserva ID:', reserva.id);
+      console.log('Confirmando reserva ID:', reserva.id);
       
-      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/pagar`, {
+      // CAMBIADO: Usar la ruta correcta /confirmar en lugar de /pagar
+      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/confirmar`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -70,30 +71,36 @@ export default function ResumenReserva({ route, navigation }) {
       }
 
       const data = await response.json();
-      console.log('Pago exitoso:', data);
+      console.log('Confirmación exitosa:', data);
 
+      if (!data.success) {
+        throw new Error(data.error || 'Error al confirmar la reserva');
+      }
+
+      // CAMBIADO: El estado ahora es 'confirmada' en lugar de 'pagado'
       const reservaActualizada = {
         ...reserva,
-        estado: 'pagado',
+        estado: 'confirmada',
         ...data.data
       };
 
-      const mensajeExito = `Pago de ${reserva.precio} € procesado correctamente.\nReserva #${reserva.id}`;
+      const mensajeExito = `Reserva #${reserva.id} confirmada correctamente.\nTotal: ${reserva.precio || 0} €`;
 
       if (Platform.OS === 'web') {
         alert(mensajeExito);
         navigation.navigate('Reservas', { reserva: reservaActualizada });
       } else {
         Alert.alert(
-          'Pago exitoso',
+          'Reserva confirmada',
           mensajeExito,
           [{ text: 'OK', onPress: () => navigation.navigate('Reservas', { reserva: reservaActualizada }) }]
         );
       }
     } catch (error) {
+      console.error('Error en confirmación:', error);
       Alert.alert(
-        'Error en el pago', 
-        error.message || 'No se pudo completar el pago. Por favor intente nuevamente.'
+        'Error al confirmar', 
+        error.message || 'No se pudo confirmar la reserva. Por favor intente nuevamente.'
       );
     } finally {
       setLoading(false);
@@ -125,6 +132,9 @@ export default function ResumenReserva({ route, navigation }) {
     );
   };
 
+  // CAMBIADO: Verificar estado 'confirmada' en lugar de 'pagado'
+  const estaConfirmada = reserva.estado === 'confirmada';
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.titulo}>Resumen de la Reserva</Text>
@@ -137,13 +147,19 @@ export default function ResumenReserva({ route, navigation }) {
           <Text style={styles.valor}>{reserva.nombre_usuario || 'Desconocido'}</Text>
         </View>
         <View style={styles.dato}>
-          <Text style={styles.label}>Numero de Reserva:</Text>
-          <Text style={styles.valor}>{reserva.id || 'No especificado'}</Text>
+          <Text style={styles.label}>Número de Reserva:</Text>
+          <Text style={styles.valor}>{reserva.id || 'Pendiente de asignación'}</Text>
         </View>
         <View style={styles.dato}>
           <Text style={styles.label}>Pista:</Text>
           <Text style={styles.valor}>{reserva.nombre_pista || reserva.pista || 'No especificado'}</Text>
         </View>
+        {reserva.polideportivo && (
+          <View style={styles.dato}>
+            <Text style={styles.label}>Polideportivo:</Text>
+            <Text style={styles.valor}>{reserva.polideportivo}</Text>
+          </View>
+        )}
         <View style={styles.dato}>
           <Text style={styles.label}>Fecha:</Text>
           <Text style={styles.valor}>{formatoFechaLegible(reserva.fecha)}</Text>
@@ -154,46 +170,54 @@ export default function ResumenReserva({ route, navigation }) {
         </View>
         <View style={styles.dato}>
           <Text style={styles.label}>Precio Total:</Text>
-          <Text style={styles.precio}>{reserva.precio} €</Text>
+          <Text style={styles.precio}>{reserva.precio || 0} €</Text>
         </View>
         <View style={styles.dato}>
           <Text style={styles.label}>Estado:</Text>
-          <Text style={[styles.valor, reserva.estado === 'pagado' ? styles.estadoPagado : styles.estadoPendiente]}>
+          <Text style={[
+            styles.valor, 
+            estaConfirmada ? styles.estadoConfirmado : styles.estadoPendiente
+          ]}>
             {reserva.estado || 'Pendiente'}
           </Text>
         </View>
       </View>
 
-      {reserva.estado !== 'pagado' && (
+      {/* CAMBIADO: Mostrar botones solo si no está confirmada */}
+      {!estaConfirmada && (
         <View style={styles.seccion}>
-          <Text style={styles.subtitulo}>Procesar Pago</Text>
+          <Text style={styles.subtitulo}>Confirmar Reserva</Text>
           
           <Text style={styles.infoPago}>
-            Puedes pagar ahora o más tarde. Tu reserva seguirá activa.
+            Puedes confirmar tu reserva ahora o más tarde. Tu reserva seguirá activa como pendiente.
           </Text>
           
           <TouchableOpacity 
-            style={styles.botonPagar} 
+            style={styles.botonConfirmar} 
             onPress={manejarPago}
             disabled={loading}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.botonTexto}>Pagar Ahora</Text>}
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.botonTexto}>Confirmar Reserva</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.botonPagar, styles.botonMasTarde]} 
+            style={[styles.botonConfirmar, styles.botonMasTarde]} 
             onPress={() => {
               setModalVisible(false);
               navigation.navigate('Reservas', { reserva });
             }}
             disabled={loading}
           >
-            <Text style={styles.botonTexto}>Pagar Más Tarde</Text>
+            <Text style={styles.botonTexto}>Confirmar Más Tarde</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Modal de pago en web */}
+      {/* Modal de confirmación en web */}
       {Platform.OS === 'web' && (
         <Modal
           animationType="slide"
@@ -203,7 +227,11 @@ export default function ResumenReserva({ route, navigation }) {
         >
           <View style={styles.modalContainer}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitulo}>Datos de Pago</Text>
+              <Text style={styles.modalTitulo}>Confirmar Reserva</Text>
+              
+              <Text style={styles.infoModal}>
+                Para confirmar tu reserva, completa los datos de pago:
+              </Text>
               
               <TextInput
                 style={styles.input}
@@ -256,22 +284,26 @@ export default function ResumenReserva({ route, navigation }) {
                 </TouchableOpacity>
                 
                 <TouchableOpacity 
-                  style={[styles.botonModal, styles.botonConfirmar, !validarFormulario() && styles.botonDisabled]}
+                  style={[styles.botonModal, styles.botonConfirmarModal, !validarFormulario() && styles.botonDisabled]}
                   onPress={procesarPago}
                   disabled={!validarFormulario() || loading}
                 >
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.textoBotonModal}>Confirmar Pago</Text>}
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.textoBotonModal}>Confirmar Reserva</Text>
+                  )}
                 </TouchableOpacity>
               </View>
 
               <TouchableOpacity 
-                style={[styles.botonModal, styles.botonMasTarde]}
+                style={[styles.botonModal, styles.botonMasTardeModal]}
                 onPress={() => {
                   setModalVisible(false);
                   navigation.navigate('Reservas', { reserva });
                 }}
               >
-                <Text style={styles.textoBotonModal}>Pagar Más Tarde</Text>
+                <Text style={styles.textoBotonModal}>Confirmar Más Tarde</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -331,7 +363,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  estadoPagado: {
+  estadoConfirmado: {
     color: '#27AE60',
     fontWeight: '600',
   },
@@ -345,7 +377,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  botonPagar: {
+  botonConfirmar: {
     backgroundColor: '#2ECC71',
     borderRadius: 8,
     padding: 15,
@@ -389,6 +421,11 @@ const styles = StyleSheet.create({
   modalTitulo: {
     fontSize: 20,
     fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  infoModal: {
+    color: '#7F8C8D',
     marginBottom: 20,
     textAlign: 'center',
   },
@@ -423,7 +460,7 @@ const styles = StyleSheet.create({
   botonCancelar: {
     backgroundColor: '#E0E0E0',
   },
-  botonConfirmar: {
+  botonConfirmarModal: {
     backgroundColor: '#2ECC71',
   },
   botonMasTardeModal: {

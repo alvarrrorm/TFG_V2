@@ -1,71 +1,66 @@
-/* Contenedor principal */
 .calendar-container {
-  position: relative;  /* fundamental para el popper */
-  margin: 15px 0;
   width: 100%;
-  z-index: 1; /* menor que el popper */
+  margin-bottom: 20px;
 }
 
-/* Input del datepicker */
-.react-datepicker__input-container input {
-  border-radius: 12px;
+.custom-datepicker {
+  width: 100%;
+  padding: 12px 15px;
+  border: 1px solid #1976D2;
+  border-radius: 10px;
   font-size: 16px;
-  border: 1px solid #ddd;
-  padding: 10px 16px;
-  width: 100%;
+  color: #1976D2;
+  background-color: white;
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(25, 118, 210, 0.2);
 }
 
-/* Contenedor del calendario emergente */
-.react-datepicker-popper {
-  z-index: 9999 !important;
-  position: absolute !important; /* asegurar posición */
-  box-shadow: 0 5px 15px rgba(25, 118, 210, 0.3);
+.custom-datepicker:focus {
+  outline: none;
+  border-color: #1565C0;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
 }
 
-/* Opcional: sombras y bordes para calendario */
-.react-datepicker {
-  border-radius: 12px;
-  box-shadow: 0 0 15px rgba(25, 118, 210, 0.3);
+.custom-calendar {
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Ajuste para que el contenedor padre no oculte el calendario */
-body, #root {
-  overflow: visible !important;
-}
-/* Contenedor principal */
-.calendar-container {
-  position: relative;  /* fundamental para el popper */
-  margin: 15px 0;
-  width: 100%;
-  z-index: 1; /* menor que el popper */
+.custom-popper {
+  z-index: 1000;
 }
 
-/* Input del datepicker */
-.react-datepicker__input-container input {
-  border-radius: 12px;
-  font-size: 16px;
-  border: 1px solid #ddd;
-  padding: 10px 16px;
-  width: 100%;
-  cursor: pointer;
-  box-shadow: 0 0 8px rgba(25, 118, 210, 0.2);
+.custom-day {
+  border-radius: 50%;
+  color: #333;
 }
 
-/* Contenedor del calendario emergente */
-.react-datepicker-popper {
-  z-index: 9999 !important;
-  position: absolute !important; /* asegurar posición */
-  box-shadow: 0 5px 15px rgba(25, 118, 210, 0.3);
+.custom-day:hover {
+  background-color: #f0f0f0;
 }
 
-/* Opcional: sombras y bordes para calendario */
-.react-datepicker {
-  border-radius: 12px;
-  box-shadow: 0 0 15px rgba(25, 118, 210, 0.3);
+.custom-day-selected {
+  background-color: #1976D2 !important;
+  color: white !important;
+  border-radius: 50%;
 }
 
-body, #root {
-  overflow: visible !important;
+.react-datepicker__header {
+  background-color: #1976D2;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+
+.react-datepicker__current-month {
+  color: white;
+  font-weight: 600;
+}
+
+.react-datepicker__day-name {
+  color: white;
+}
+
+.react-datepicker__navigation-icon::before {
+  border-color: white;
 }
