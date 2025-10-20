@@ -8,7 +8,10 @@ import {
   RefreshControl, 
   TouchableOpacity, 
   Alert,
-  Platform 
+  Platform,
+  SafeAreaView,
+  StatusBar,
+  Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { UserContext } from '../contexto/UserContex';
@@ -19,9 +22,15 @@ const MisReservas = () => {
   const navigation = useNavigation();
 
   const [reservas, setReservas] = useState([]);
+  const [reservasPasadas, setReservasPasadas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [mostrarPasadas, setMostrarPasadas] = useState(false);
+
+  const { width } = Dimensions.get('window');
+  const isLargeScreen = width > 768;
+  const isMediumScreen = width > 480;
 
   // --- Alert multiplataforma ---
   const showAlert = (title, message, buttons = [], options = {}) => {
@@ -54,21 +63,52 @@ const MisReservas = () => {
     });
   };
 
-  // --- Cancelación ---
+  // --- Validaciones MEJORADAS ---
   const esCancelable = (fecha, hora_inicio) => {
     const ahora = new Date();
     const inicioReserva = new Date(`${fecha}T${hora_inicio}`);
 
+    // Si ya pasó la reserva
     if (inicioReserva < ahora) {
-      return { cancelable: false, motivo: 'jugado' };
+      return { cancelable: false, motivo: 'pasada', mensaje: 'Esta reserva ya ha pasado' };
     }
 
-    const diffHoras = (inicioReserva - ahora) / (1000 * 60 * 60);
-    if (diffHoras < 1) {
-      return { cancelable: false, motivo: 'proximo' };
+    // Calcular diferencia en minutos para ser más precisos
+    const diffMinutos = (inicioReserva - ahora) / (1000 * 60);
+    
+    // No se puede cancelar si falta menos de 1 hora (60 minutos)
+    if (diffMinutos < 60) {
+      const minutosRestantes = Math.floor(diffMinutos);
+      return { 
+        cancelable: false, 
+        motivo: 'proxima', 
+        mensaje: `Solo se puede cancelar hasta 1 hora antes. Faltan ${minutosRestantes} minutos` 
+      };
     }
 
-    return { cancelable: true, motivo: null };
+    return { cancelable: true, motivo: null, mensaje: null };
+  };
+
+  const esPagable = (fecha, hora_inicio, estado) => {
+    // Solo se puede pagar si está pendiente y no ha pasado la fecha/hora
+    if (estado !== 'pendiente') {
+      return { pagable: false, motivo: 'estado', mensaje: 'Esta reserva ya ha sido procesada' };
+    }
+
+    const ahora = new Date();
+    const inicioReserva = new Date(`${fecha}T${hora_inicio}`);
+
+    if (inicioReserva < ahora) {
+      return { pagable: false, motivo: 'pasada', mensaje: 'Esta reserva ya ha pasado' };
+    }
+
+    return { pagable: true, motivo: null, mensaje: null };
+  };
+
+  const esReservaPasada = (fecha, hora_inicio) => {
+    const ahora = new Date();
+    const inicioReserva = new Date(`${fecha}T${hora_inicio}`);
+    return inicioReserva < ahora;
   };
 
   // --- Icono según tipo de pista ---
@@ -89,16 +129,17 @@ const MisReservas = () => {
     }
   };
 
-  // --- Fetch ---
+  // --- Fetch adaptado a tu backend actual ---
   const fetchReservas = async () => {
     try {
       setError(null);
-      if (!dni) {
+      if (!nombreUsuario) {
         setReservas([]);
+        setReservasPasadas([]);
         return;
       }
 
-      const response = await fetch(`http://localhost:3001/reservas?dni_usuario=${dni}`);
+      const response = await fetch(`http://localhost:3001/reservas?nombre_usuario=${encodeURIComponent(nombreUsuario)}`);
       if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
 
       const result = await response.json();
@@ -106,32 +147,68 @@ const MisReservas = () => {
         throw new Error('Formato de respuesta inválido del servidor');
       }
 
-      const reservasUsuario = result.data.filter((r) => r.dni_usuario === dni);
-      const reservasProcesadas = reservasUsuario.map((r) => ({
-        ...r,
+      // Adaptar los campos del backend a lo que espera el frontend
+      const reservasAdaptadas = result.data.map((r) => ({
+        id: r.id,
+        dni_usuario: r.dni_usuario,
+        nombre_usuario: r.nombre_usuario,
+        // Mapear campos del backend a los nombres que espera el frontend
+        pista: r.pista_id, // Convertir pista_id a pista
+        nombre_pista: r.pistaNombre || `Pista ${r.pista_id}`, // pistaNombre → nombre_pista
+        tipo_pista: r.pistaTipo || 'Desconocido', // pistaTipo → tipo_pista
         fecha: formatDate(r.fecha),
         hora_inicio: formatTime(r.hora_inicio),
         hora_fin: formatTime(r.hora_fin),
-        precio: parseFloat(r.precio || 0).toFixed(2)
+        precio: parseFloat(r.precio || 0).toFixed(2),
+        estado: r.estado,
+        polideportivo_nombre: r.polideportivo_nombre || 'Polideportivo',
+        ludoteca: r.ludoteca || false
       }));
 
-      reservasProcesadas.sort(
-        (a, b) => new Date(`${b.fecha}T${b.hora_inicio}`) - new Date(`${a.fecha}T${a.hora_inicio}`)
-      );
+      // Separar reservas activas y pasadas
+      const ahora = new Date();
+      const reservasActivas = [];
+      const reservasHistoricas = [];
 
-      setReservas(reservasProcesadas);
+      reservasAdaptadas.forEach(reserva => {
+        const inicioReserva = new Date(`${reserva.fecha}T${reserva.hora_inicio}`);
+        if (inicioReserva >= ahora && reserva.estado !== 'cancelada') {
+          reservasActivas.push(reserva);
+        } else {
+          reservasHistoricas.push(reserva);
+        }
+      });
+
+      // Ordenar por fecha
+      reservasActivas.sort((a, b) => new Date(`${a.fecha}T${a.hora_inicio}`) - new Date(`${b.fecha}T${b.hora_inicio}`));
+      reservasHistoricas.sort((a, b) => new Date(`${b.fecha}T${b.hora_inicio}`) - new Date(`${a.fecha}T${a.hora_inicio}`));
+
+      setReservas(reservasActivas);
+      setReservasPasadas(reservasHistoricas);
     } catch (error) {
       setError(error.message);
       setReservas([]);
+      setReservasPasadas([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  // --- Cancelar ---
+  // --- Cancelar reserva MEJORADO ---
   const cancelarReserva = async (idReserva) => {
     try {
+      // Primero verificamos si todavía se puede cancelar (por si acaso)
+      const reserva = [...reservas, ...reservasPasadas].find(r => r.id === idReserva);
+      if (reserva) {
+        const { cancelable, mensaje } = esCancelable(reserva.fecha, reserva.hora_inicio);
+        if (!cancelable) {
+          showAlert('No se puede cancelar', mensaje);
+          await fetchReservas(); // Recargar para actualizar estado
+          return;
+        }
+      }
+
       const response = await fetch(`http://localhost:3001/reservas/${idReserva}`, {
         method: 'DELETE'
       });
@@ -147,17 +224,44 @@ const MisReservas = () => {
     }
   };
 
-  const confirmarCancelacion = (idReserva) => {
+  const confirmarCancelacion = (reserva) => {
+    const { cancelable, mensaje } = esCancelable(reserva.fecha, reserva.hora_inicio);
+    
+    if (!cancelable) {
+      showAlert('No se puede cancelar', mensaje);
+      return;
+    }
+
+    const mensajeConfirmacion = `¿Estás seguro de que quieres cancelar esta reserva?\n\n` +
+      `📍 ${reserva.polideportivo_nombre}\n` +
+      `🎾 ${reserva.nombre_pista} (${reserva.tipo_pista})\n` +
+      `📅 ${formatDateForDisplay(reserva.fecha)}\n` +
+      `⏰ ${reserva.hora_inicio} - ${reserva.hora_fin}\n` +
+      `💰 ${reserva.precio} €`;
+
     if (Platform.OS === 'web') {
-      if (window.confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
-        cancelarReserva(idReserva);
+      if (window.confirm(mensajeConfirmacion)) {
+        cancelarReserva(reserva.id);
       }
     } else {
-      Alert.alert('Cancelar reserva', '¿Seguro que quieres cancelar esta reserva?', [
+      Alert.alert('Cancelar reserva', mensajeConfirmacion, [
         { text: 'No', style: 'cancel' },
-        { text: 'Sí', onPress: () => cancelarReserva(idReserva) }
+        { text: 'Sí, cancelar', onPress: () => cancelarReserva(reserva.id) }
       ]);
     }
+  };
+
+  // --- Manejar pago ---
+  const manejarPago = (reserva) => {
+    const { pagable, mensaje } = esPagable(reserva.fecha, reserva.hora_inicio, reserva.estado);
+    
+    if (!pagable) {
+      showAlert('No se puede pagar', mensaje);
+      return;
+    }
+
+    // Navegar al resumen para pagar
+    navigation.navigate('ResumenReserva', { reserva });
   };
 
   const onRefresh = () => {
@@ -167,34 +271,48 @@ const MisReservas = () => {
 
   useEffect(() => {
     fetchReservas();
-  }, [dni]);
+  }, [nombreUsuario]);
 
-  // --- Render de cada tarjeta ---
-  const renderItem = ({ item }) => {
-    const { cancelable, motivo } = esCancelable(item.fecha, item.hora_inicio);
+  // --- Render de cada tarjeta de reserva CORREGIDO ---
+  const RenderReservaItem = ({ item, esPasada = false }) => {
+    const { cancelable, motivo: motivoCancelacion, mensaje: mensajeCancelacion } = esCancelable(item.fecha, item.hora_inicio);
+    const { pagable, motivo: motivoPago, mensaje: mensajePago } = esPagable(item.fecha, item.hora_inicio, item.estado);
 
     let estado = 'Pendiente';
     let bgColor = '#FEF9C3';
     let badgeColor = '#FACC15';
 
-    if (motivo === 'jugado') {
-      estado = 'Jugado';
+    if (esPasada) {
+      estado = 'Completada';
       bgColor = '#E5E7EB';
       badgeColor = '#6B7280';
-    } else if (item.estado === 'pagado') {
-      estado = 'Pagado';
+    } else if (item.estado === 'confirmada') {
+      estado = 'Confirmada';
       bgColor = '#D1FAE5';
       badgeColor = '#10B981';
+    } else if (item.estado === 'cancelada') {
+      estado = 'Cancelada';
+      bgColor = '#FEE2E2';
+      badgeColor = '#EF4444';
+    } else if (motivoCancelacion === 'pasada') {
+      estado = 'Pasada';
+      bgColor = '#E5E7EB';
+      badgeColor = '#6B7280';
     }
 
     return (
       <View style={[styles.reservaItem, { backgroundColor: bgColor }]}>
         <View style={styles.headerRow}>
           <View style={styles.row}>
-            <Ionicons name={getPistaIcon(item.tipo_pista)} size={22} color="#374151" />
-            <Text style={styles.reservaTitulo}>
-              {item.nombre_pista || `Pista ${item.pista}`} ({item.tipo_pista})
-            </Text>
+            <Ionicons name={getPistaIcon(item.tipo_pista)} size={isLargeScreen ? 26 : 22} color="#374151" />
+            <View style={styles.infoContainer}>
+              <Text style={styles.reservaTitulo}>
+                {item.nombre_pista} ({item.tipo_pista})
+              </Text>
+              <Text style={styles.polideportivoText}>
+                {item.polideportivo_nombre}
+              </Text>
+            </View>
           </View>
           <View style={[styles.badge, { backgroundColor: badgeColor }]}>
             <Text style={styles.badgeText}>{estado}</Text>
@@ -206,187 +324,488 @@ const MisReservas = () => {
         </Text>
         <Text style={styles.reservaPrecio}>Precio: {item.precio}€</Text>
 
-        {/* Botón Pagar si está pendiente */}
-        {item.estado === 'pendiente' ? (
-          <TouchableOpacity
-            style={[styles.botonPagar, { marginBottom: 6 }]}
-            onPress={() => navigation.navigate('ResumenReserva', { reserva: item })}
-          >
-            <Text style={styles.textoBoton}>Pagar Ahora</Text>
-          </TouchableOpacity>
-        ) : null}
+        {/* BOTONES PARA RESERVAS ACTIVAS NO CANCELADAS */}
+        {!esPasada && item.estado !== 'cancelada' && (
+          <View style={[styles.botonesContainer, isMediumScreen && styles.botonesFila]}>
+            
+            {/* BOTÓN PAGAR - Solo para reservas pendientes */}
+            {item.estado === 'pendiente' && (
+              <TouchableOpacity
+                style={[
+                  styles.botonPagar, 
+                  !pagable && styles.botonDeshabilitado,
+                  isMediumScreen && styles.botonFlex
+                ]}
+                onPress={() => manejarPago(item)}
+                disabled={!pagable}
+              >
+                <Text style={[
+                  styles.textoBoton,
+                  !pagable && styles.textoBotonDeshabilitado
+                ]}>
+                  {pagable ? 'Pagar Ahora' : 'No Pagable'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
-        {/* Botón Cancelar */}
-        {cancelable ? (
-          <TouchableOpacity
-            style={styles.botonCancelar}
-            onPress={() => confirmarCancelacion(item.id)}
-          >
-            <Text style={styles.textoBotonCancelar}>Cancelar Reserva</Text>
-          </TouchableOpacity>
-        ) : (
-          <Text
-            style={{
-              backgroundColor: '#9CA3AF',
-              padding: 8,
-              borderRadius: 6,
-              color: 'white',
-              textAlign: 'center',
-              marginTop: 6
-            }}
-          >
-            {motivo === 'jugado' ? 'Ya jugado' : 'No cancelable (<1h)'}
+            {/* BOTÓN CANCELAR - Para reservas pendientes Y confirmadas */}
+            <TouchableOpacity
+              style={[
+                styles.botonCancelar,
+                !cancelable && styles.botonDeshabilitado,
+                isMediumScreen && styles.botonFlex
+              ]}
+              onPress={() => {
+                if (cancelable) {
+                  confirmarCancelacion(item);
+                } else {
+                  showAlert('No se puede cancelar', mensajeCancelacion);
+                }
+              }}
+              disabled={!cancelable}
+            >
+              <Text style={[
+                styles.textoBotonCancelar,
+                !cancelable && styles.textoBotonDeshabilitado
+              ]}>
+                {cancelable ? 'Cancelar Reserva' : 'No Cancelable'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* BOTÓN VER DETALLES - Para reservas confirmadas */}
+            {item.estado === 'confirmada' && (
+              <TouchableOpacity
+                style={[
+                  styles.botonDetalles,
+                  isMediumScreen && styles.botonFlex
+                ]}
+                onPress={() => navigation.navigate('ResumenReserva', { reserva: item })}
+              >
+                <Text style={styles.textoBoton}>Ver Detalles</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* MENSAJES INFORMATIVOS */}
+        {!esPasada && item.estado === 'pendiente' && !pagable && (
+          <Text style={styles.textoAdvertencia}>
+            ⚠️ {mensajePago}
+          </Text>
+        )}
+
+        {!esPasada && !cancelable && (
+          <Text style={styles.textoAdvertencia}>
+            ⚠️ {mensajeCancelacion}
           </Text>
         )}
       </View>
     );
   };
 
+  // --- Componente con TODO el contenido ---
+  const ReservasContent = () => (
+    <View style={styles.content}>
+      <Text style={styles.titulo}>Mis Reservas ({nombreUsuario})</Text>
+      <Text style={styles.subtitulo}>
+        Gestiona tus reservas activas y consulta el historial
+      </Text>
+
+      {/* Estadísticas rápidas */}
+      <View style={styles.estadisticasContainer}>
+        <View style={styles.estadisticaItem}>
+          <Text style={styles.estadisticaNumero}>{reservas.length}</Text>
+          <Text style={styles.estadisticaTexto}>Activas</Text>
+        </View>
+        <View style={styles.estadisticaItem}>
+          <Text style={styles.estadisticaNumero}>{reservasPasadas.length}</Text>
+          <Text style={styles.estadisticaTexto}>Histórico</Text>
+        </View>
+      </View>
+
+      {/* RESERVAS ACTIVAS */}
+      <View style={styles.seccionContainer}>
+        <Text style={styles.seccionTitulo}>Reservas Activas</Text>
+        <Text style={styles.seccionSubtitulo}>
+          Próximas reservas pendientes de confirmar o pagar
+        </Text>
+
+        {reservas.length === 0 ? (
+          <View style={styles.centeredSeccion}>
+            <Ionicons name="calendar" size={isLargeScreen ? 60 : 40} color="#D1D5DB" style={{ marginBottom: 10 }} />
+            <Text style={styles.noReservas}>No tienes reservas activas</Text>
+            <TouchableOpacity 
+              style={styles.botonNuevaReserva}
+              onPress={() => navigation.navigate('CrearReserva')}
+            >
+              <Text style={styles.textoBoton}>Hacer Nueva Reserva</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.listaContainer}>
+            {reservas.map((item) => (
+              <RenderReservaItem key={item.id.toString()} item={item} esPasada={false} />
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* HISTORIAL DE RESERVAS (oculto por defecto) */}
+      {reservasPasadas.length > 0 && (
+        <View style={styles.seccionContainer}>
+          <TouchableOpacity 
+            style={styles.botonHistorial}
+            onPress={() => setMostrarPasadas(!mostrarPasadas)}
+          >
+            <Text style={styles.botonHistorialTexto}>
+              {mostrarPasadas ? '📋 Ocultar Historial' : '📋 Ver Historial'} 
+              ({reservasPasadas.length})
+            </Text>
+            <Ionicons 
+              name={mostrarPasadas ? "chevron-up" : "chevron-down"} 
+              size={20} 
+              color="#6B7280" 
+            />
+          </TouchableOpacity>
+
+          {mostrarPasadas && (
+            <View style={styles.historialContainer}>
+              <Text style={styles.seccionSubtitulo}>
+                Reservas pasadas, completadas y canceladas
+              </Text>
+              <View style={styles.listaContainer}>
+                {reservasPasadas.map((item) => (
+                  <RenderReservaItem key={item.id.toString()} item={item} esPasada={true} />
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+
+  // --- Item vacío para el FlatList ---
+  const renderEmptyItem = () => null;
+
   // --- Loading ---
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#8B5CF6" />
-        <Text style={{ marginTop: 10 }}>Cargando tus reservas...</Text>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.centered}>
+          <ActivityIndicator size={isLargeScreen ? "large" : "large"} color="#8B5CF6" />
+          <Text style={[styles.loadingText, isLargeScreen && styles.loadingTextLarge]}>
+            Cargando tus reservas...
+          </Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   // --- Error ---
   if (error) {
     return (
-      <View style={styles.centered}>
-        <Ionicons name="warning" size={40} color="#EF4444" />
-        <Text style={[styles.noReservas, { color: '#EF4444', marginTop: 10 }]}>
-          Error: {error}
-        </Text>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.centered}>
+          <Ionicons name="warning" size={isLargeScreen ? 50 : 40} color="#EF4444" />
+          <Text style={[styles.noReservas, { color: '#EF4444', marginTop: 10 }, isLargeScreen && styles.errorTextLarge]}>
+            Error: {error}
+          </Text>
+          <TouchableOpacity style={styles.botonReintentar} onPress={fetchReservas}>
+            <Text style={styles.textoBoton}>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
-  // --- Lista ---
+  // --- Lista con Scroll ---
   return (
-    <View style={styles.container}>
-      <Text style={styles.titulo}>Mis Reservas ({nombreUsuario})</Text>
-      <Text style={{ textAlign: 'center', color: '#6B7280', marginBottom: 10 }}>
-        Las reservas se pueden cancelar hasta una hora antes del inicio
-      </Text>
-
-      {reservas.length === 0 ? (
-        <View style={styles.centered}>
-          <Ionicons name="calendar" size={50} color="#D1D5DB" style={{ marginBottom: 15 }} />
-          <Text style={styles.noReservas}>No tienes reservas activas</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={reservas}
-          keyExtractor={(item) => item.id.toString()}
-          renderItem={renderItem}
-          contentContainerStyle={styles.lista}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8B5CF6']} />
-          }
-        />
-      )}
-    </View>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" />
+      
+      <FlatList
+        data={[{}]} // Array con un elemento vacío
+        keyExtractor={(item, index) => index.toString()}
+        
+        // Todo el contenido como header
+        ListHeaderComponent={<ReservasContent />}
+        
+        renderItem={renderEmptyItem}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#8B5CF6']} />
+        }
+        style={Platform.OS === 'web' ? { height: '100vh' } : {}}
+      />
+    </SafeAreaView>
   );
 };
 
-// --- Estilos ---
+// --- Estilos Responsive ---
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    padding: Platform.OS === 'web' ? 40 : 20,
-    backgroundColor: '#F9FAFB',
-    maxWidth: Platform.OS === 'web' ? 800 : '100%',
-    alignSelf: Platform.OS === 'web' ? 'center' : 'auto',
-    width: Platform.OS === 'web' ? '80%' : '100%',
+    backgroundColor: '#f8fafc',
+  },
+  scrollContent: {
+    flexGrow: 1,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 40,
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
   },
   titulo: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#111827',
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 8,
+    color: '#1F2937',
     textAlign: 'center',
+  },
+  subtitulo: {
+    textAlign: 'center',
+    color: '#6B7280',
+    marginBottom: 30,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  estadisticasContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 20,
+    marginBottom: 30,
+  },
+  estadisticaItem: {
+    alignItems: 'center',
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 12,
+    minWidth: 100,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  estadisticaNumero: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#8B5CF6',
+  },
+  estadisticaTexto: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  seccionContainer: {
+    marginBottom: 30,
+  },
+  seccionTitulo: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  seccionSubtitulo: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 20,
+  },
+  botonHistorial: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  botonHistorialTexto: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  historialContainer: {
+    marginTop: 10,
+  },
+  listaContainer: {
+    paddingBottom: 10,
   },
   reservaItem: {
     borderRadius: 12,
-    padding: 15,
-    marginBottom: 12,
+    padding: 20,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOpacity: 0.1,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+    marginHorizontal: Platform.OS === 'web' ? 'auto' : 0,
+    maxWidth: 800,
+    width: '100%',
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
+    alignItems: 'flex-start',
+    marginBottom: 8,
   },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flex: 1,
+    marginRight: 10,
+  },
+  infoContainer: {
+    flex: 1,
+    marginLeft: 12,
   },
   reservaTitulo: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginLeft: 8,
     color: '#1F2937',
+    marginBottom: 4,
+  },
+  polideportivoText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontStyle: 'italic',
   },
   reservaTexto: {
-    fontSize: 15,
-    marginBottom: 4,
+    fontSize: 16,
+    marginBottom: 6,
     color: '#374151',
   },
   reservaPrecio: {
-    fontSize: 15,
-    marginBottom: 8,
-    fontWeight: '500',
+    fontSize: 16,
+    marginBottom: 12,
+    fontWeight: '600',
     color: '#111827',
   },
-  botonCancelar: {
-    marginTop: 8,
-    backgroundColor: '#EF4444',
-    padding: 8,
-    borderRadius: 6,
+  botonesContainer: {
+    marginTop: 12,
+  },
+  botonesFila: {
+    flexDirection: 'row',
+    gap: 10,
     alignItems: 'center',
-    alignSelf: 'flex-start',
+  },
+  botonCancelar: {
+    backgroundColor: '#EF4444',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    minWidth: 140,
   },
   botonPagar: {
-    marginTop: 8,
-    backgroundColor: '#10b981',
-    padding: 8,
-    borderRadius: 6,
+    backgroundColor: '#10B981',
+    padding: 12,
+    borderRadius: 8,
     alignItems: 'center',
-    alignSelf: 'flex-start',
+    minWidth: 140,
+  },
+  botonDetalles: {
+    backgroundColor: '#8B5CF6',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    minWidth: 140,
+  },
+  botonFlex: {
+    flex: 1,
+  },
+  botonDeshabilitado: {
+    backgroundColor: '#9CA3AF',
+  },
+  botonReintentar: {
+    marginTop: 20,
+    backgroundColor: '#8B5CF6',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    minWidth: 120,
+  },
+  botonNuevaReserva: {
+    marginTop: 15,
+    backgroundColor: '#8B5CF6',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    minWidth: 200,
   },
   textoBoton: {
     color: 'white',
     fontWeight: 'bold',
+    fontSize: 15,
+  },
+  textoBotonDeshabilitado: {
+    color: '#E5E7EB',
   },
   textoBotonCancelar: {
     color: 'white',
     fontWeight: 'bold',
+    fontSize: 15,
+  },
+  textoAdvertencia: {
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    borderRadius: 6,
+    color: '#92400E',
+    textAlign: 'center',
+    marginTop: 10,
+    fontSize: 13,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
   },
   noReservas: {
     fontSize: 16,
     color: '#6B7280',
     textAlign: 'center',
+    marginBottom: 15,
   },
-  lista: {
-    paddingBottom: 20,
+  loadingText: {
+    marginTop: 15,
+    fontSize: 16,
+    color: '#6B7280',
+  },
+  loadingTextLarge: {
+    fontSize: 18,
+    marginTop: 20,
+  },
+  errorTextLarge: {
+    fontSize: 18,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 30,
+  },
+  centeredSeccion: {
+    alignItems: 'center',
+    padding: 30,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginTop: 10,
   },
   badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    minWidth: 80,
+    alignItems: 'center',
   },
   badgeText: {
     color: 'white',

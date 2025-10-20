@@ -18,7 +18,6 @@ import { Checkbox } from 'react-native-paper';
 import { UserContext } from '../contexto/UserContex';
 import CalendarioWeb from './CalendarioWeb';
 import PrecioEstimado from './PrecioEstimado';
-import ResumenReserva from './ResumenReserva';
 
 export default function FormularioReserva({ navigation }) {
   const { usuario, dni } = useContext(UserContext);
@@ -59,6 +58,11 @@ export default function FormularioReserva({ navigation }) {
   const horasFiltradas = esHoy
     ? horasDisponibles.filter(h => parseInt(h.split(":")[0], 10) > horaActual)
     : horasDisponibles;
+
+  // Obtener polideportivo seleccionado
+  const polideportivoSeleccionado = form.polideportivo 
+    ? polideportivos.find(p => p.id.toString() === form.polideportivo)
+    : null;
 
   // --- Cargar polideportivos ---
   useEffect(() => {
@@ -108,18 +112,19 @@ export default function FormularioReserva({ navigation }) {
       if (!dni) return;
       
       try {
-        const res = await fetch(`http://localhost:3001/reservas/usuario/${dni}?estado=pendiente`);
+        const res = await fetch(`http://localhost:3001/reservas?nombre_usuario=${encodeURIComponent(nombre)}`);
         const data = await res.json();
         
         if (data.success) {
-          setMisReservasPendientes(data.data || []);
+          const reservasPendientes = data.data.filter(reserva => reserva.estado === 'pendiente');
+          setMisReservasPendientes(reservasPendientes || []);
         }
       } catch (error) {
         console.error('Error cargando mis reservas:', error);
       }
     };
     fetchMisReservas();
-  }, [dni]);
+  }, [dni, nombre]);
 
   // --- Cargar reservas existentes cuando se selecciona fecha y pista ---
   useEffect(() => {
@@ -235,11 +240,16 @@ export default function FormularioReserva({ navigation }) {
   const handleSubmit = async () => {
     // Validar que no hay errores
     if (Object.keys(errores).length > 0) {
+      Alert.alert('Error', 'Por favor, corrige los errores antes de continuar');
       return;
     }
 
     // Validar que el usuario no tenga ya una reserva pendiente
     if (misReservasPendientes.length > 0) {
+      Alert.alert(
+        'Reserva pendiente', 
+        'Ya tienes una reserva pendiente. No puedes hacer más reservas hasta que completes o canceles la actual.'
+      );
       return;
     }
 
@@ -253,9 +263,12 @@ export default function FormularioReserva({ navigation }) {
         hora_inicio: form.horaInicio,
         hora_fin: form.horaFin,
         ludoteca: form.ludoteca,
-        estado: 'pendiente',
-        id_polideportivo: parseInt(form.polideportivo)
+        estado: 'pendiente'
+        // El polideportivo_id se obtiene automáticamente en el backend
+        // a partir de la pista seleccionada
       };
+
+      console.log('Enviando datos de reserva:', reservaData);
 
       const res = await fetch('http://localhost:3001/reservas', {
         method: 'POST',
@@ -270,30 +283,21 @@ export default function FormularioReserva({ navigation }) {
       }
 
       if (!data.success) {
-        throw new Error(data.message || 'Error al crear la reserva');
+        throw new Error(data.error || 'Error al crear la reserva');
       }
 
-      const reserva = {
-        id: data.data?.id || null,
-        dni_usuario: dni,
-        nombre_usuario: nombre,
-        pista: form.pista,
-        nombre_pista: pistaSeleccionada?.nombre || '',
-        fecha: form.fecha,
-        hora_inicio: form.horaInicio,
-        hora_fin: form.horaFin,
-        ludoteca: form.ludoteca,
-        estado: 'pendiente',
-        precio: precioTotal,
-        tipo_pista: pistaSeleccionada?.tipo || '',
-        polideportivo: polideportivos.find(p => p.id.toString() === form.polideportivo)?.nombre || '',
-      };
+      console.log('Reserva creada exitosamente:', data.data);
 
-      setReservaCreada(reserva);
-      navigation.navigate('ResumenReserva', { reserva });
+      // Usar directamente los datos que devuelve el backend
+      // que ya incluyen polideportivo_nombre, pistaNombre, etc.
+      const reservaCreada = data.data;
+
+      // Navegar al resumen con todos los datos completos
+      navigation.navigate('ResumenReserva', { reserva: reservaCreada });
       
     } catch (error) {
-      setErrores(prev => ({ ...prev, general: error.message || 'Ocurrió un error al crear la reserva' }));
+      console.error('Error creando reserva:', error);
+      Alert.alert('Error', error.message || 'Ocurrió un error al crear la reserva');
     } finally {
       setLoading(false);
     }
@@ -353,6 +357,16 @@ export default function FormularioReserva({ navigation }) {
           )}
         </View>
         {errores.polideportivo && <Text style={styles.fieldError}>{errores.polideportivo}</Text>}
+
+        {/* Información del polideportivo seleccionado */}
+        {polideportivoSeleccionado && (
+          <View style={styles.infoPolideportivo}>
+            <Text style={styles.infoPolideportivoText}>
+              📍 {polideportivoSeleccionado.nombre}
+              {polideportivoSeleccionado.direccion && ` - ${polideportivoSeleccionado.direccion}`}
+            </Text>
+          </View>
+        )}
 
         <Text style={styles.label}>Selecciona la pista</Text>
         <View style={styles.pickerWrapper}>
@@ -493,13 +507,6 @@ export default function FormularioReserva({ navigation }) {
               precio={precioTotal}
               duracion={duracion}
               precioHora={pistaSeleccionada?.precio || 0}
-            />
-            <ResumenReserva
-              pista={pistaSeleccionada?.nombre || ''}
-              precioHora={pistaSeleccionada?.precio || 0}
-              duracion={duracion}
-              total={precioTotal}
-              ludoteca={form.ludoteca}
             />
           </View>
         )}
@@ -752,5 +759,18 @@ const styles = StyleSheet.create({
   },
   botonDisabled: {
     backgroundColor: '#90caf9',
+  },
+  infoPolideportivo: {
+    backgroundColor: '#e0f2fe',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#0284c7',
+  },
+  infoPolideportivoText: {
+    color: '#0369a1',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

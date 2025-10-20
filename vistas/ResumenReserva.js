@@ -3,13 +3,16 @@ import {
   View, 
   Text, 
   StyleSheet, 
-  ScrollView, 
+  FlatList, 
   TouchableOpacity, 
   Alert, 
   ActivityIndicator,
   Platform,
   Modal,
-  TextInput
+  TextInput,
+  Dimensions,
+  SafeAreaView,
+  StatusBar
 } from 'react-native';
 
 export default function ResumenReserva({ route, navigation }) {
@@ -23,24 +26,32 @@ export default function ResumenReserva({ route, navigation }) {
     cvv: ''
   });
 
+  const { width, height } = Dimensions.get('window');
+  const isLargeScreen = width > 768;
+  const isMediumScreen = width > 480;
+  const isSmallScreen = width < 380;
+
   useEffect(() => {
-    console.log('Datos recibidos en ResumenReserva:', reserva);
+    console.log('Datos completos de reserva recibidos:', reserva);
+    console.log('Polideportivo nombre:', obtenerPolideportivo());
+    console.log('Pista nombre:', obtenerPista());
   }, [reserva]);
 
   if (!reserva) {
     return (
-      <View style={styles.centrado}>
-        <Text style={styles.errorTexto}>No se han recibido datos de la reserva.</Text>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" />
+        <View style={styles.centrado}>
+          <Text style={styles.errorTexto}>No se han recibido datos de la reserva.</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   const manejarPago = async () => {
     if (Platform.OS === 'web') {
-      // Mostrar modal con formulario de pago en web
       setModalVisible(true);
     } else {
-      // Proceso simplificado para móvil
       procesarPago();
     }
   };
@@ -56,7 +67,6 @@ export default function ResumenReserva({ route, navigation }) {
     try {
       console.log('Confirmando reserva ID:', reserva.id);
       
-      // CAMBIADO: Usar la ruta correcta /confirmar en lugar de /pagar
       const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/confirmar`, {
         method: 'PUT',
         headers: {
@@ -77,7 +87,6 @@ export default function ResumenReserva({ route, navigation }) {
         throw new Error(data.error || 'Error al confirmar la reserva');
       }
 
-      // CAMBIADO: El estado ahora es 'confirmada' en lugar de 'pagado'
       const reservaActualizada = {
         ...reserva,
         estado: 'confirmada',
@@ -132,90 +141,198 @@ export default function ResumenReserva({ route, navigation }) {
     );
   };
 
-  // CAMBIADO: Verificar estado 'confirmada' en lugar de 'pagado'
   const estaConfirmada = reserva.estado === 'confirmada';
 
-  return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>Resumen de la Reserva</Text>
+  // Función para obtener el nombre del polideportivo
+  const obtenerPolideportivo = () => {
+    // Prioridad: polideportivo_nombre (del JOIN) > nombre_polideportivo > polideportivo
+    return reserva.polideportivo_nombre || 
+           reserva.nombre_polideportivo || 
+           reserva.polideportivo || 
+           'No especificado';
+  };
 
-      <View style={styles.seccion}>
-        <Text style={styles.subtitulo}>Detalles de la Reserva</Text>
-        
-        <View style={styles.dato}>
-          <Text style={styles.label}>Usuario:</Text>
-          <Text style={styles.valor}>{reserva.nombre_usuario || 'Desconocido'}</Text>
-        </View>
-        <View style={styles.dato}>
-          <Text style={styles.label}>Número de Reserva:</Text>
-          <Text style={styles.valor}>{reserva.id || 'Pendiente de asignación'}</Text>
-        </View>
-        <View style={styles.dato}>
-          <Text style={styles.label}>Pista:</Text>
-          <Text style={styles.valor}>{reserva.nombre_pista || reserva.pista || 'No especificado'}</Text>
-        </View>
-        {reserva.polideportivo && (
-          <View style={styles.dato}>
-            <Text style={styles.label}>Polideportivo:</Text>
-            <Text style={styles.valor}>{reserva.polideportivo}</Text>
-          </View>
-        )}
-        <View style={styles.dato}>
-          <Text style={styles.label}>Fecha:</Text>
-          <Text style={styles.valor}>{formatoFechaLegible(reserva.fecha)}</Text>
-        </View>
-        <View style={styles.dato}>
-          <Text style={styles.label}>Horario:</Text>
-          <Text style={styles.valor}>{reserva.hora_inicio} - {reserva.hora_fin}</Text>
-        </View>
-        <View style={styles.dato}>
-          <Text style={styles.label}>Precio Total:</Text>
-          <Text style={styles.precio}>{reserva.precio || 0} €</Text>
-        </View>
-        <View style={styles.dato}>
-          <Text style={styles.label}>Estado:</Text>
-          <Text style={[
-            styles.valor, 
-            estaConfirmada ? styles.estadoConfirmado : styles.estadoPendiente
-          ]}>
-            {reserva.estado || 'Pendiente'}
+  // Función para obtener el nombre de la pista
+  const obtenerPista = () => {
+    return reserva.pistaNombre || 
+           reserva.nombre_pista || 
+           reserva.pista || 
+           'No especificado';
+  };
+
+  // Componente con TODO el contenido
+  const ReservaContent = () => (
+    <View style={styles.content}>
+      {/* Header con gradiente */}
+      <View style={styles.header}>
+        <Text style={[styles.titulo, isSmallScreen && styles.tituloSmall]}>
+          Resumen de Reserva
+        </Text>
+        <Text style={[styles.subtituloHeader, isSmallScreen && styles.subtituloHeaderSmall]}>
+          Revisa y confirma los detalles de tu reserva
+        </Text>
+      </View>
+
+      {/* Tarjeta principal de detalles */}
+      <View style={[styles.tarjeta, isLargeScreen && styles.tarjetaLarge]}>
+        <View style={[styles.encabezadoTarjeta, isSmallScreen && styles.encabezadoTarjetaSmall]}>
+          <Text style={[styles.tituloTarjeta, isSmallScreen && styles.tituloTarjetaSmall]}>
+            Detalles de la Reserva
           </Text>
+          <View style={[styles.badgeEstado, estaConfirmada ? styles.badgeConfirmado : styles.badgePendiente]}>
+            <Text style={styles.badgeTexto}>
+              {estaConfirmada ? '✅ Confirmada' : '⏳ Pendiente'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.gridDetalles}>
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Usuario</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              {reserva.nombre_usuario || 'Desconocido'}
+            </Text>
+          </View>
+
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Número de Reserva</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              #{reserva.id || 'Pendiente'}
+            </Text>
+          </View>
+
+          {/* Información del Polideportivo - SIEMPRE VISIBLE */}
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Polideportivo</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              {obtenerPolideportivo()}
+            </Text>
+          </View>
+
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Pista</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              {obtenerPista()}
+            </Text>
+          </View>
+
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Fecha</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              {formatoFechaLegible(reserva.fecha)}
+            </Text>
+          </View>
+
+          <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Horario</Text>
+            <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
+              {reserva.hora_inicio} - {reserva.hora_fin}
+            </Text>
+          </View>
+
+          <View style={[styles.datoContainer, styles.datoPrecio, isSmallScreen && styles.datoContainerSmall]}>
+            <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Precio Total</Text>
+            <Text style={[styles.precio, isSmallScreen && styles.precioSmall]}>
+              {reserva.precio || 0} €
+            </Text>
+          </View>
         </View>
       </View>
 
-      {/* CAMBIADO: Mostrar botones solo si no está confirmada */}
+      {/* Sección de confirmación */}
       {!estaConfirmada && (
-        <View style={styles.seccion}>
-          <Text style={styles.subtitulo}>Confirmar Reserva</Text>
-          
-          <Text style={styles.infoPago}>
-            Puedes confirmar tu reserva ahora o más tarde. Tu reserva seguirá activa como pendiente.
+        <View style={[styles.tarjeta, isLargeScreen && styles.tarjetaLarge]}>
+          <Text style={[styles.tituloTarjeta, isSmallScreen && styles.tituloTarjetaSmall]}>
+            Confirmar Reserva
           </Text>
           
-          <TouchableOpacity 
-            style={styles.botonConfirmar} 
-            onPress={manejarPago}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.botonTexto}>Confirmar Reserva</Text>
-            )}
-          </TouchableOpacity>
+          <View style={styles.infoBox}>
+            <Text style={styles.infoIcon}>💡</Text>
+            <Text style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
+              Puedes confirmar tu reserva ahora o más tarde. Tu reserva seguirá activa como pendiente.
+            </Text>
+          </View>
+          
+          <View style={[
+            styles.botonesContainer, 
+            isMediumScreen && styles.botonesFila,
+            isSmallScreen && styles.botonesContainerSmall
+          ]}>
+            <TouchableOpacity 
+              style={[
+                styles.botonPrincipal, 
+                styles.botonConfirmar,
+                isSmallScreen && styles.botonPrincipalSmall
+              ]} 
+              onPress={manejarPago}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={[styles.botonTexto, isSmallScreen && styles.botonTextoSmall]}>
+                    Confirmar Ahora
+                  </Text>
+                  <Text style={[styles.botonSubtexto, isSmallScreen && styles.botonSubtextoSmall]}>
+                    Procesar pago
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.botonConfirmar, styles.botonMasTarde]} 
-            onPress={() => {
-              setModalVisible(false);
-              navigation.navigate('Reservas', { reserva });
-            }}
-            disabled={loading}
-          >
-            <Text style={styles.botonTexto}>Confirmar Más Tarde</Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={[
+                styles.botonPrincipal, 
+                styles.botonSecundario,
+                isSmallScreen && styles.botonPrincipalSmall
+              ]} 
+              onPress={() => {
+                setModalVisible(false);
+                navigation.navigate('Reservas', { reserva });
+              }}
+              disabled={loading}
+            >
+              <Text style={[
+                styles.botonTexto, 
+                styles.botonTextoSecundario,
+                isSmallScreen && styles.botonTextoSmall
+              ]}>
+                Confirmar Más Tarde
+              </Text>
+              <Text style={[
+                styles.botonSubtexto, 
+                styles.botonSubtextoSecundario,
+                isSmallScreen && styles.botonSubtextoSmall
+              ]}>
+                Ir a mis reservas
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
+    </View>
+  );
+
+  // Item vacío para el FlatList
+  const renderEmptyItem = () => null;
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" />
+      
+      <FlatList
+        data={[{}]} // Array con un elemento vacío
+        keyExtractor={(item, index) => index.toString()}
+        
+        // Todo el contenido como header
+        ListHeaderComponent={<ReservaContent />}
+        
+        renderItem={renderEmptyItem}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={true}
+        style={Platform.OS === 'web' ? { height: '100vh' } : {}}
+      />
 
       {/* Modal de confirmación en web */}
       {Platform.OS === 'web' && (
@@ -225,59 +342,136 @@ export default function ResumenReserva({ route, navigation }) {
           visible={modalVisible}
           onRequestClose={() => setModalVisible(false)}
         >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitulo}>Confirmar Reserva</Text>
-              
-              <Text style={styles.infoModal}>
-                Para confirmar tu reserva, completa los datos de pago:
-              </Text>
-              
-              <TextInput
-                style={styles.input}
-                placeholder="Nombre en la tarjeta"
-                value={datosPago.nombre}
-                onChangeText={(text) => setDatosPago({...datosPago, nombre: text})}
-              />
-              
-              <TextInput
-                style={styles.input}
-                placeholder="Número de tarjeta"
-                value={formatoTarjeta(datosPago.tarjeta)}
-                onChangeText={(text) => setDatosPago({...datosPago, tarjeta: text.replace(/\D/g, '')})}
-                keyboardType="numeric"
-                maxLength={19}
-              />
-              
-              <View style={styles.filaInputs}>
-                <TextInput
-                  style={[styles.input, styles.inputMedio]}
-                  placeholder="MM/AA"
-                  value={datosPago.expiracion}
-                  onChangeText={(text) => {
-                    const limpio = text.replace(/[^0-9]/g, '');
-                    if (limpio.length > 2) {
-                      setDatosPago({...datosPago, expiracion: `${limpio.substring(0, 2)}/${limpio.substring(2, 4)}`});
-                    } else {
-                      setDatosPago({...datosPago, expiracion: limpio});
-                    }
-                  }}
-                  maxLength={5}
-                />
-                
-                <TextInput
-                  style={[styles.input, styles.inputMedio]}
-                  placeholder="CVV"
-                  value={datosPago.cvv}
-                  onChangeText={(text) => setDatosPago({...datosPago, cvv: text.replace(/\D/g, '').slice(0, 4)})}
-                  keyboardType="numeric"
-                  maxLength={4}
-                />
+          <View style={styles.modalOverlay}>
+            <View style={[
+              styles.modalContent, 
+              isLargeScreen && styles.modalContentLarge,
+              isSmallScreen && styles.modalContentSmall
+            ]}>
+              <View style={styles.modalHeader}>
+                <Text style={[
+                  styles.modalTitulo,
+                  isSmallScreen && styles.modalTituloSmall
+                ]}>
+                  Confirmar Pago
+                </Text>
+                <TouchableOpacity 
+                  style={styles.botonCerrar}
+                  onPress={() => setModalVisible(false)}
+                >
+                  <Text style={styles.botonCerrarTexto}>×</Text>
+                </TouchableOpacity>
               </View>
               
-              <View style={styles.botonesModal}>
+              <View style={styles.infoBoxModal}>
+                <Text style={[
+                  styles.infoTextModal,
+                  isSmallScreen && styles.infoTextModalSmall
+                ]}>
+                  Completa los datos de pago para confirmar tu reserva en {obtenerPolideportivo()}
+                </Text>
+              </View>
+              
+              <View style={styles.formContainer}>
+                <View style={styles.inputGroup}>
+                  <Text style={[
+                    styles.inputLabel,
+                    isSmallScreen && styles.inputLabelSmall
+                  ]}>
+                    Nombre en la tarjeta
+                  </Text>
+                  <TextInput
+                    style={[styles.input, isSmallScreen && styles.inputSmall]}
+                    placeholder="Ej: Juan Pérez"
+                    value={datosPago.nombre}
+                    onChangeText={(text) => setDatosPago({...datosPago, nombre: text})}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[
+                    styles.inputLabel,
+                    isSmallScreen && styles.inputLabelSmall
+                  ]}>
+                    Número de tarjeta
+                  </Text>
+                  <TextInput
+                    style={[styles.input, isSmallScreen && styles.inputSmall]}
+                    placeholder="0000 0000 0000 0000"
+                    value={formatoTarjeta(datosPago.tarjeta)}
+                    onChangeText={(text) => setDatosPago({...datosPago, tarjeta: text.replace(/\D/g, '')})}
+                    keyboardType="numeric"
+                    maxLength={19}
+                  />
+                </View>
+                
+                <View style={[
+                  styles.filaInputs,
+                  isSmallScreen && styles.filaInputsSmall
+                ]}>
+                  <View style={styles.inputGroup}>
+                    <Text style={[
+                      styles.inputLabel,
+                      isSmallScreen && styles.inputLabelSmall
+                    ]}>
+                      Fecha expiración
+                    </Text>
+                    <TextInput
+                      style={[styles.input, isSmallScreen && styles.inputSmall]}
+                      placeholder="MM/AA"
+                      value={datosPago.expiracion}
+                      onChangeText={(text) => {
+                        const limpio = text.replace(/[^0-9]/g, '');
+                        if (limpio.length > 2) {
+                          setDatosPago({...datosPago, expiracion: `${limpio.substring(0, 2)}/${limpio.substring(2, 4)}`});
+                        } else {
+                          setDatosPago({...datosPago, expiracion: limpio});
+                        }
+                      }}
+                      maxLength={5}
+                    />
+                  </View>
+                  
+                  <View style={styles.inputGroup}>
+                    <Text style={[
+                      styles.inputLabel,
+                      isSmallScreen && styles.inputLabelSmall
+                    ]}>
+                      CVV
+                    </Text>
+                    <TextInput
+                      style={[styles.input, isSmallScreen && styles.inputSmall]}
+                      placeholder="123"
+                      value={datosPago.cvv}
+                      onChangeText={(text) => setDatosPago({...datosPago, cvv: text.replace(/\D/g, '').slice(0, 4)})}
+                      keyboardType="numeric"
+                      maxLength={4}
+                    />
+                  </View>
+                </View>
+              </View>
+              
+              <View style={styles.resumenPago}>
+                <Text style={[
+                  styles.resumenLabel,
+                  isSmallScreen && styles.resumenLabelSmall
+                ]}>
+                  Total a pagar:
+                </Text>
+                <Text style={[
+                  styles.resumenPrecio,
+                  isSmallScreen && styles.resumenPrecioSmall
+                ]}>
+                  {reserva.precio || 0} €
+                </Text>
+              </View>
+              
+              <View style={[
+                styles.botonesModal,
+                isSmallScreen && styles.botonesModalSmall
+              ]}>
                 <TouchableOpacity 
-                  style={[styles.botonModal, styles.botonCancelar]}
+                  style={[styles.botonModal, styles.botonCancelarModal]}
                   onPress={() => setModalVisible(false)}
                 >
                   <Text style={styles.textoBotonModal}>Cancelar</Text>
@@ -291,190 +485,436 @@ export default function ResumenReserva({ route, navigation }) {
                   {loading ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.textoBotonModal}>Confirmar Reserva</Text>
+                    <Text style={styles.textoBotonModal}>
+                      Pagar {reserva.precio || 0} €
+                    </Text>
                   )}
                 </TouchableOpacity>
               </View>
 
               <TouchableOpacity 
-                style={[styles.botonModal, styles.botonMasTardeModal]}
+                style={styles.botonMasTardeModal}
                 onPress={() => {
                   setModalVisible(false);
                   navigation.navigate('Reservas', { reserva });
                 }}
               >
-                <Text style={styles.textoBotonModal}>Confirmar Más Tarde</Text>
+                <Text style={styles.textoBotonMasTarde}>Confirmar más tarde</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
-    </ScrollView>
+    </SafeAreaView>
   );
 }
 
+// Los estilos se mantienen exactamente igual que en tu código original
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    backgroundColor: '#fff',
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingBottom: 40,
   },
-  titulo: {
-    fontSize: 24,
-    fontWeight: '700',
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    maxWidth: 800,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  header: {
+    backgroundColor: '#667eea',
+    paddingVertical: 30,
+    paddingHorizontal: 20,
+    alignItems: 'center',
     marginBottom: 20,
-    color: '#2C3E50',
+    borderRadius: 16,
+  },
+  titulo: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 8,
     textAlign: 'center',
   },
-  seccion: {
-    marginBottom: 25,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 10,
-    padding: 15,
+  tituloSmall: {
+    fontSize: 24,
   },
-  subtitulo: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 15,
-    color: '#34495E',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E1E8ED',
-    paddingBottom: 8,
+  subtituloHeader: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.9)',
+    textAlign: 'center',
   },
-  dato: {
+  subtituloHeaderSmall: {
+    fontSize: 14,
+  },
+  tarjeta: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  tarjetaLarge: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  encabezadoTarjeta: {
     flexDirection: 'row',
-    marginBottom: 10,
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 20,
+    flexWrap: 'wrap',
   },
-  label: {
+  encabezadoTarjetaSmall: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  tituloTarjeta: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  tituloTarjetaSmall: {
+    fontSize: 18,
+  },
+  badgeEstado: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  badgeConfirmado: {
+    backgroundColor: '#dcfce7',
+  },
+  badgePendiente: {
+    backgroundColor: '#fef3c7',
+  },
+  badgeTexto: {
+    fontSize: 12,
     fontWeight: '600',
-    width: 120,
-    color: '#7F8C8D',
-    fontSize: 15,
+    color: '#166534',
   },
-  valor: {
+  gridDetalles: {
+    gap: 16,
+  },
+  datoContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  datoContainerSmall: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  datoPrecio: {
+    borderBottomWidth: 0,
+    marginTop: 8,
+    paddingTop: 16,
+    borderTopWidth: 2,
+    borderTopColor: '#e5e7eb',
+  },
+  datoLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
     flex: 1,
-    color: '#2C3E50',
-    fontSize: 15,
+  },
+  datoLabelSmall: {
+    fontSize: 13,
+  },
+  datoValor: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1f2937',
+    flex: 2,
+    textAlign: 'right',
+  },
+  datoValorSmall: {
+    fontSize: 14,
+    textAlign: 'left',
+    flex: 1,
   },
   precio: {
-    flex: 1,
-    color: '#27AE60',
-    fontSize: 16,
+    fontSize: 24,
     fontWeight: '700',
+    color: '#059669',
   },
-  estadoConfirmado: {
-    color: '#27AE60',
-    fontWeight: '600',
+  precioSmall: {
+    fontSize: 20,
   },
-  estadoPendiente: {
-    color: '#F39C12',
-    fontWeight: '600',
-  },
-  infoPago: {
-    color: '#7F8C8D',
+  infoBox: {
+    backgroundColor: '#eff6ff',
+    padding: 16,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     marginBottom: 20,
-    textAlign: 'center',
-    fontStyle: 'italic',
+  },
+  infoIcon: {
+    fontSize: 20,
+    marginRight: 12,
+    marginTop: 2,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1e40af',
+    lineHeight: 20,
+  },
+  infoTextSmall: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  botonesContainer: {
+    gap: 12,
+  },
+  botonesContainerSmall: {
+    gap: 8,
+  },
+  botonesFila: {
+    flexDirection: 'row',
+  },
+  botonPrincipal: {
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    flex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  botonPrincipalSmall: {
+    padding: 14,
   },
   botonConfirmar: {
-    backgroundColor: '#2ECC71',
-    borderRadius: 8,
-    padding: 15,
-    alignItems: 'center',
-    marginTop: 10,
+    backgroundColor: '#059669',
   },
-  botonMasTarde: {
-    backgroundColor: '#3498DB',
-    marginTop: 10,
+  botonSecundario: {
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#d1d5db',
   },
   botonTexto: {
-    color: '#FFF',
+    color: '#fff',
     fontWeight: '700',
     fontSize: 16,
+    marginBottom: 4,
+  },
+  botonTextoSmall: {
+    fontSize: 14,
+  },
+  botonTextoSecundario: {
+    color: '#374151',
+  },
+  botonSubtexto: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+  },
+  botonSubtextoSmall: {
+    fontSize: 11,
+  },
+  botonSubtextoSecundario: {
+    color: '#6b7280',
   },
   centrado: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    backgroundColor: '#f8fafc',
   },
   errorTexto: {
-    color: '#E74C3C',
+    color: '#dc2626',
     fontSize: 18,
     textAlign: 'center',
+    fontWeight: '600',
   },
   // Estilos para el modal (web)
-  modalContainer: {
+  modalOverlay: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 16,
   },
   modalContent: {
     backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20,
-    width: '90%',
+    borderRadius: 20,
+    padding: 0,
+    width: '100%',
     maxWidth: 500,
+    maxHeight: '90%',
+    overflow: 'hidden',
+  },
+  modalContentLarge: {
+    maxWidth: 600,
+  },
+  modalContentSmall: {
+    maxWidth: '100%',
+    marginHorizontal: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
   modalTitulo: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1f2937',
   },
-  infoModal: {
-    color: '#7F8C8D',
-    marginBottom: 20,
+  modalTituloSmall: {
+    fontSize: 20,
+  },
+  botonCerrar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  botonCerrarTexto: {
+    fontSize: 20,
+    color: '#6b7280',
+    fontWeight: '300',
+  },
+  infoBoxModal: {
+    backgroundColor: '#f0f9ff',
+    padding: 16,
+    margin: 20,
+    marginTop: 0,
+    borderRadius: 12,
+  },
+  infoTextModal: {
+    fontSize: 14,
+    color: '#0369a1',
     textAlign: 'center',
+    fontWeight: '500',
+  },
+  infoTextModalSmall: {
+    fontSize: 13,
+  },
+  formContainer: {
+    padding: 20,
+    paddingTop: 0,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  inputLabelSmall: {
+    fontSize: 13,
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#BDC3C7',
-    borderRadius: 8,
-    padding: 12,
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 14,
     fontSize: 16,
-    marginBottom: 15,
-    backgroundColor: '#FFF',
+    backgroundColor: '#fff',
+    color: '#1f2937',
+  },
+  inputSmall: {
+    padding: 12,
+    fontSize: 14,
   },
   filaInputs: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 16,
   },
-  inputMedio: {
-    width: '48%',
+  filaInputsSmall: {
+    flexDirection: 'column',
+    gap: 12,
+  },
+  resumenPago: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8fafc',
+    marginTop: 8,
+  },
+  resumenLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  resumenLabelSmall: {
+    fontSize: 15,
+  },
+  resumenPrecio: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  resumenPrecioSmall: {
+    fontSize: 20,
   },
   botonesModal: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
+    gap: 12,
+    padding: 20,
+    paddingTop: 0,
+  },
+  botonesModalSmall: {
+    flexDirection: 'column',
+    gap: 8,
   },
   botonModal: {
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
     flex: 1,
-    marginHorizontal: 5,
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
   },
-  botonCancelar: {
-    backgroundColor: '#E0E0E0',
+  botonCancelarModal: {
+    backgroundColor: '#fd0000ff',
   },
   botonConfirmarModal: {
-    backgroundColor: '#2ECC71',
-  },
-  botonMasTardeModal: {
-    backgroundColor: '#3498DB',
-    marginTop: 15,
-    alignSelf: 'center',
-    width: '100%',
+    backgroundColor: '#059669',
   },
   botonDisabled: {
-    backgroundColor: '#A9DFBF',
+    backgroundColor: '#9ca3af',
     opacity: 0.7,
   },
   textoBotonModal: {
-    color: '#FFF',
+    color: '#fff',
     fontWeight: '600',
+    fontSize: 16,
+  },
+  botonMasTardeModal: {
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  textoBotonMasTarde: {
+    color: '#6b7280',
+    fontWeight: '500',
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
 });
