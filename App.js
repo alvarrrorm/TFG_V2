@@ -9,6 +9,7 @@ import Selector from './vistas/selector';
 import CrearReserva from './vistas/NuevaReserva';
 import AdminPanel from './vistas/admin';
 import ResumenReserva from './vistas/ResumenReserva';
+import FormularioReserva from './componentes/FormularioReserva';
 
 import MisReservas from './vistas/MisReservas';
 
@@ -53,6 +54,11 @@ export default function App() {
               headerShown: false,         
             }}
           />
+          <Stack.Screen 
+  name="FormularioReserva" 
+  component={FormularioReserva}
+  options={{ title: 'Nueva Reserva' }}
+/>
           <Stack.Screen
             name="CrearReserva"
             component={CrearReserva}

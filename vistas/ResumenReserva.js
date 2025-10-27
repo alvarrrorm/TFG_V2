@@ -17,6 +17,9 @@ import {
 
 export default function ResumenReserva({ route, navigation }) {
   const reserva = route?.params?.reserva;
+  const mensaje = route?.params?.mensaje;
+  const precioActualizado = route?.params?.precioActualizado;
+  
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [datosPago, setDatosPago] = useState({
@@ -31,11 +34,69 @@ export default function ResumenReserva({ route, navigation }) {
   const isMediumScreen = width > 480;
   const isSmallScreen = width < 380;
 
+  // 👇 FUNCIÓN MEJORADA PARA FORMATEAR FECHA
+  const formatoFechaLegible = (fechaInput) => {
+    if (!fechaInput) return 'No especificado';
+    
+    let fechaObj;
+    
+    // Si ya es un string ISO
+    if (typeof fechaInput === 'string' && fechaInput.includes('T')) {
+      fechaObj = new Date(fechaInput);
+    } 
+    // Si es formato YYYY-MM-DD
+    else if (typeof fechaInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fechaInput)) {
+      fechaObj = new Date(fechaInput + 'T00:00:00');
+    }
+    // Otros casos
+    else {
+      fechaObj = new Date(fechaInput);
+    }
+    
+    if (isNaN(fechaObj.getTime())) {
+      return 'Fecha inválida';
+    }
+    
+    const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    return fechaObj.toLocaleDateString('es-ES', opciones);
+  };
+
+  // 👇 FUNCIÓN MEJORADA PARA OBTENER PRECIO
+  const obtenerPrecio = () => {
+    if (reserva?.precio === undefined || reserva?.precio === null) return 0;
+    return typeof reserva.precio === 'string' ? parseFloat(reserva.precio) : reserva.precio;
+  };
+
+  // 👇 FUNCIONES MEJORADAS PARA OBTENER NOMBRES
+  const obtenerPolideportivo = () => {
+    return reserva?.polideportivo_nombre || 
+           reserva?.nombre_polideportivo || 
+           (reserva?.polideportivo_id ? `Polideportivo ${reserva.polideportivo_id}` : 'No especificado');
+  };
+
+  const obtenerPista = () => {
+    return reserva?.pistaNombre || 
+           reserva?.nombre_pista || 
+           (reserva?.pista_id ? `Pista ${reserva.pista_id}` : 'No especificado');
+  };
+
+  const obtenerNombreUsuario = () => {
+    return reserva?.nombre_usuario || 'Desconocido';
+  };
+
   useEffect(() => {
     console.log('Datos completos de reserva recibidos:', reserva);
-    console.log('Polideportivo nombre:', obtenerPolideportivo());
-    console.log('Pista nombre:', obtenerPista());
-  }, [reserva]);
+    console.log('Precio de la reserva:', obtenerPrecio());
+    console.log('Mensaje:', mensaje);
+    console.log('Precio actualizado:', precioActualizado);
+    
+    // Mostrar mensaje de éxito si existe
+    if (mensaje && Platform.OS === 'web') {
+      alert(mensaje);
+    } else if (mensaje) {
+      Alert.alert('Éxito', mensaje);
+    }
+  }, [reserva, mensaje, precioActualizado]);
 
   if (!reserva) {
     return (
@@ -47,6 +108,70 @@ export default function ResumenReserva({ route, navigation }) {
       </SafeAreaView>
     );
   }
+
+  const manejarEditarReserva = () => {
+    console.log('Editando reserva:', reserva);
+    navigation.navigate('FormularioReserva', { reserva });
+  };
+
+  const manejarCancelarReserva = async () => {
+    if (!reserva?.id) {
+      Alert.alert('Error', 'No se encontró el ID de la reserva');
+      return;
+    }
+
+    Alert.alert(
+      'Cancelar Reserva',
+      '¿Estás seguro de que quieres cancelar esta reserva?',
+      [
+        { text: 'No', style: 'cancel' },
+        { 
+          text: 'Sí, cancelar', 
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              console.log('Cancelando reserva ID:', reserva.id);
+              
+              const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/cancelar`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                }
+              });
+
+              if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+              }
+
+              const data = await response.json();
+              console.log('Cancelación exitosa:', data);
+
+              if (!data.success) {
+                throw new Error(data.error || 'Error al cancelar la reserva');
+              }
+
+              Alert.alert(
+                'Reserva Cancelada',
+                'Tu reserva ha sido cancelada correctamente.',
+                [{ text: 'OK', onPress: () => navigation.navigate('Reservas') }]
+              );
+            } catch (error) {
+              console.error('Error en cancelación:', error);
+              Alert.alert(
+                'Error al cancelar', 
+                error.message || 'No se pudo cancelar la reserva. Por favor intente nuevamente.'
+              );
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const manejarPago = async () => {
     if (Platform.OS === 'web') {
@@ -93,7 +218,8 @@ export default function ResumenReserva({ route, navigation }) {
         ...data.data
       };
 
-      const mensajeExito = `Reserva #${reserva.id} confirmada correctamente.\nTotal: ${reserva.precio || 0} €`;
+      const precioFinal = obtenerPrecio();
+      const mensajeExito = `Reserva #${reserva.id} confirmada correctamente.\nTotal: ${precioFinal} €`;
 
       if (Platform.OS === 'web') {
         alert(mensajeExito);
@@ -117,12 +243,6 @@ export default function ResumenReserva({ route, navigation }) {
     }
   };
 
-  const formatoFechaLegible = (fechaISO) => {
-    if (!fechaISO) return 'No especificado';
-    const opciones = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    return new Date(fechaISO).toLocaleDateString('es-ES', opciones);
-  };
-
   const formatoTarjeta = (numero) => {
     const limpio = numero.replace(/\D/g, '');
     const partes = [];
@@ -142,25 +262,9 @@ export default function ResumenReserva({ route, navigation }) {
   };
 
   const estaConfirmada = reserva.estado === 'confirmada';
+  const estaPendiente = reserva.estado === 'pendiente';
+  const precioReserva = obtenerPrecio();
 
-  // Función para obtener el nombre del polideportivo
-  const obtenerPolideportivo = () => {
-    // Prioridad: polideportivo_nombre (del JOIN) > nombre_polideportivo > polideportivo
-    return reserva.polideportivo_nombre || 
-           reserva.nombre_polideportivo || 
-           reserva.polideportivo || 
-           'No especificado';
-  };
-
-  // Función para obtener el nombre de la pista
-  const obtenerPista = () => {
-    return reserva.pistaNombre || 
-           reserva.nombre_pista || 
-           reserva.pista || 
-           'No especificado';
-  };
-
-  // Componente con TODO el contenido
   const ReservaContent = () => (
     <View style={styles.content}>
       {/* Header con gradiente */}
@@ -171,6 +275,15 @@ export default function ResumenReserva({ route, navigation }) {
         <Text style={[styles.subtituloHeader, isSmallScreen && styles.subtituloHeaderSmall]}>
           Revisa y confirma los detalles de tu reserva
         </Text>
+        
+        {/* 👇 MOSTRAR MENSAJE DE PRECIO ACTUALIZADO */}
+        {precioActualizado && (
+          <View style={styles.precioActualizadoBanner}>
+            <Text style={styles.precioActualizadoText}>
+              ✅ El precio se ha actualizado correctamente
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Tarjeta principal de detalles */}
@@ -190,7 +303,7 @@ export default function ResumenReserva({ route, navigation }) {
           <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
             <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Usuario</Text>
             <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
-              {reserva.nombre_usuario || 'Desconocido'}
+              {obtenerNombreUsuario()}
             </Text>
           </View>
 
@@ -201,7 +314,6 @@ export default function ResumenReserva({ route, navigation }) {
             </Text>
           </View>
 
-          {/* Información del Polideportivo - SIEMPRE VISIBLE */}
           <View style={[styles.datoContainer, isSmallScreen && styles.datoContainerSmall]}>
             <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Polideportivo</Text>
             <Text style={[styles.datoValor, isSmallScreen && styles.datoValorSmall]}>
@@ -230,17 +342,46 @@ export default function ResumenReserva({ route, navigation }) {
             </Text>
           </View>
 
+          {/* 👇 SECCIÓN DE PRECIO DESTACADA */}
           <View style={[styles.datoContainer, styles.datoPrecio, isSmallScreen && styles.datoContainerSmall]}>
             <Text style={[styles.datoLabel, isSmallScreen && styles.datoLabelSmall]}>Precio Total</Text>
-            <Text style={[styles.precio, isSmallScreen && styles.precioSmall]}>
-              {reserva.precio || 0} €
-            </Text>
+            <View style={styles.precioContainer}>
+              <Text style={[styles.precio, isSmallScreen && styles.precioSmall]}>
+                {precioReserva} €
+              </Text>
+              {precioActualizado && (
+                <Text style={styles.precioActualizadoBadge}>
+                  Actualizado
+                </Text>
+              )}
+            </View>
           </View>
         </View>
+
+        {/* Botones de acción para reservas pendientes */}
+        {estaPendiente && (
+          <View style={styles.botonesAccionContainer}>
+            <TouchableOpacity 
+              style={[styles.botonAccion, styles.botonEditar]}
+              onPress={manejarEditarReserva}
+              disabled={loading}
+            >
+              <Text style={styles.botonAccionTexto}>✏️ Modificar Reserva</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.botonAccion, styles.botonCancelar]}
+              onPress={manejarCancelarReserva}
+              disabled={loading}
+            >
+              <Text style={styles.botonAccionTexto}>🗑️ Cancelar Reserva</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Sección de confirmación */}
-      {!estaConfirmada && (
+      {estaPendiente && (
         <View style={[styles.tarjeta, isLargeScreen && styles.tarjetaLarge]}>
           <Text style={[styles.tituloTarjeta, isSmallScreen && styles.tituloTarjetaSmall]}>
             Confirmar Reserva
@@ -275,7 +416,7 @@ export default function ResumenReserva({ route, navigation }) {
                     Confirmar Ahora
                   </Text>
                   <Text style={[styles.botonSubtexto, isSmallScreen && styles.botonSubtextoSmall]}>
-                    Procesar pago
+                    Pagar {precioReserva} €
                   </Text>
                 </>
               )}
@@ -311,10 +452,26 @@ export default function ResumenReserva({ route, navigation }) {
           </View>
         </View>
       )}
+
+      {/* Información para reservas confirmadas */}
+      {estaConfirmada && (
+        <View style={[styles.tarjeta, isLargeScreen && styles.tarjetaLarge]}>
+          <Text style={[styles.tituloTarjeta, isSmallScreen && styles.tituloTarjetaSmall]}>
+            Reserva Confirmada
+          </Text>
+          
+          <View style={styles.infoBox}>
+            <Text style={styles.infoIcon}>✅</Text>
+            <Text style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
+              Tu reserva ha sido confirmada y pagada. Presenta este número de reserva en el polideportivo: 
+              <Text style={styles.numeroReserva}> #{reserva.id}</Text>
+            </Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 
-  // Item vacío para el FlatList
   const renderEmptyItem = () => null;
 
   return (
@@ -322,12 +479,9 @@ export default function ResumenReserva({ route, navigation }) {
       <StatusBar barStyle="dark-content" />
       
       <FlatList
-        data={[{}]} // Array con un elemento vacío
+        data={[{}]}
         keyExtractor={(item, index) => index.toString()}
-        
-        // Todo el contenido como header
         ListHeaderComponent={<ReservaContent />}
-        
         renderItem={renderEmptyItem}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={true}
@@ -462,7 +616,7 @@ export default function ResumenReserva({ route, navigation }) {
                   styles.resumenPrecio,
                   isSmallScreen && styles.resumenPrecioSmall
                 ]}>
-                  {reserva.precio || 0} €
+                  {precioReserva} €
                 </Text>
               </View>
               
@@ -486,7 +640,7 @@ export default function ResumenReserva({ route, navigation }) {
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.textoBotonModal}>
-                      Pagar {reserva.precio || 0} €
+                      Pagar {precioReserva} €
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -509,7 +663,7 @@ export default function ResumenReserva({ route, navigation }) {
   );
 }
 
-// Los estilos se mantienen exactamente igual que en tu código original
+// Los estilos se mantienen igual...
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -550,6 +704,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   subtituloHeaderSmall: {
+    fontSize: 14,
+  },
+  precioActualizadoBanner: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 10,
+  },
+  precioActualizadoText: {
+    color: '#fff',
+    fontWeight: '600',
     fontSize: 14,
   },
   tarjeta: {
@@ -648,6 +814,11 @@ const styles = StyleSheet.create({
     textAlign: 'left',
     flex: 1,
   },
+  precioContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   precio: {
     fontSize: 24,
     fontWeight: '700',
@@ -655,6 +826,45 @@ const styles = StyleSheet.create({
   },
   precioSmall: {
     fontSize: 20,
+  },
+  precioActualizadoBadge: {
+    backgroundColor: '#fef3c7',
+    color: '#92400e',
+    fontSize: 12,
+    fontWeight: '600',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  botonesAccionContainer: {
+    marginTop: 20,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 20,
+  },
+  botonAccion: {
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 2,
+  },
+  botonEditar: {
+    backgroundColor: '#fff',
+    borderColor: '#3b82f6',
+  },
+  botonCancelar: {
+    backgroundColor: '#fff',
+    borderColor: '#ef4444',
+  },
+  botonAccionTexto: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  numeroReserva: {
+    fontWeight: '700',
+    color: '#059669',
+    fontSize: 16,
   },
   infoBox: {
     backgroundColor: '#eff6ff',
@@ -745,7 +955,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
   },
-  // Estilos para el modal (web)
+  // Estilos para el modal (web) - se mantienen igual
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -892,7 +1102,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   botonCancelarModal: {
-    backgroundColor: '#fd0000ff',
+    backgroundColor: '#6b7280',
   },
   botonConfirmarModal: {
     backgroundColor: '#059669',

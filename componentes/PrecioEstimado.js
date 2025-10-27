@@ -1,64 +1,111 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 
-const PrecioEstimado = ({ pista, horaInicio, horaFin }) => {
-  const [precio, setPrecio] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const obtenerPrecio = async () => {
-      if (!pista || !horaInicio || !horaFin) return;
-
-      setLoading(true);
-      try {
-        const response = await fetch(
-          `http://localhost:3001/reservas/precio-estimado?pista=${encodeURIComponent(
-            pista
-          )}&hora_inicio=${horaInicio}&hora_fin=${horaFin}`
-        );
-        const data = await response.json();
-        setPrecio(data.precioEstimado);
-      } catch (error) {
-        console.error('Error al obtener precio estimado:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    obtenerPrecio();
-  }, [pista, horaInicio, horaFin]);
-
-  if (!pista || !horaInicio || !horaFin) return null;
-
+export default function PrecioEstimado({ 
+  precio, 
+  duracion, 
+  precioHora, 
+  esEdicion = false, 
+  precioAnterior = 0 
+}) {
+  const hayCambio = esEdicion && precio !== precioAnterior;
+  
   return (
     <View style={styles.container}>
-      {loading ? (
-        <ActivityIndicator size="small" color="#555" />
-      ) : precio !== null ? (
-        <Text style={styles.text}>💰 Precio estimado: {precio.toFixed(2)} €</Text>
-      ) : (
-        <Text style={styles.text}>No se pudo calcular el precio</Text>
+      <Text style={styles.titulo}>
+        {esEdicion ? 'Precio Actualizado' : 'Precio Estimado'}
+      </Text>
+      
+      {esEdicion && hayCambio && (
+        <View style={styles.cambioContainer}>
+          <Text style={styles.cambioTexto}>
+            Precio anterior: {precioAnterior} €
+          </Text>
+        </View>
+      )}
+      
+      <View style={styles.desglose}>
+        <Text style={styles.desgloseTexto}>
+          {duracion}h × {precioHora}€/hora = {duracion * precioHora}€
+        </Text>
+      </View>
+      
+      <View style={styles.totalContainer}>
+        <Text style={styles.totalLabel}>Total:</Text>
+        <Text style={[styles.totalPrecio, hayCambio && styles.precioCambiado]}>
+          {precio} €
+        </Text>
+      </View>
+      
+      {hayCambio && (
+        <Text style={styles.notaCambio}>
+          💰 El precio se ha actualizado por los cambios realizados
+        </Text>
       )}
     </View>
   );
-};
+}
 
+// ESTILOS CORREGIDOS - Asegúrate de que StyleSheet esté importado correctamente
 const styles = StyleSheet.create({
   container: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: '#f3f3f3',
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: '#f8fafc',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
-  text: {
+  titulo: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 8,
+  },
+  cambioContainer: {
+    backgroundColor: '#fef3c7',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  cambioTexto: {
+    fontSize: 14,
+    color: '#92400e',
+    fontStyle: 'italic',
+  },
+  desglose: {
+    marginBottom: 12,
+  },
+  desgloseTexto: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  totalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 12,
+  },
+  totalLabel: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
+    fontWeight: '600',
+    color: '#374151',
+  },
+  totalPrecio: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  precioCambiado: {
+    color: '#dc2626',
+  },
+  notaCambio: {
+    fontSize: 12,
+    color: '#dc2626',
+    fontStyle: 'italic',
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
-
-export default PrecioEstimado;

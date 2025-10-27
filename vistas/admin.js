@@ -9,14 +9,12 @@ import {
   FlatList,
   TextInput,
   ActivityIndicator,
-  ScrollView,
   Platform,
-  Dimensions,
-  SectionList,
-  RefreshControl,
-  useWindowDimensions,
   Modal,
   StatusBar,
+  Dimensions,
+  useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useUser } from '../contexto/UserContex';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -50,7 +48,7 @@ export default function AdminPanel({ navigation }) {
   const [polideportivosItems, setPolideportivosItems] = useState([]);
   const [errorNombreRepetido, setErrorNombreRepetido] = useState('');
   const [activeTab, setActiveTab] = useState('polideportivos');
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const isLargeScreen = width >= 768;
   const isSmallScreen = width < 400;
   const [modalVisible, setModalVisible] = useState(false);
@@ -60,9 +58,8 @@ export default function AdminPanel({ navigation }) {
   const [nuevoPolideportivoNombre, setNuevoPolideportivoNombre] = useState('');
   const [nuevoPolideportivoDireccion, setNuevoPolideportivoDireccion] = useState('');
   const [nuevoPolideportivoTelefono, setNuevoPolideportivoTelefono] = useState('');
-
-  // Estados para hover effects
-  const [isHoveredBack, setIsHoveredBack] = useState(false);
+  const [modalPistaVisible, setModalPistaVisible] = useState(false);
+  const [filtroPolideportivo, setFiltroPolideportivo] = useState('todos');
 
   // Cargar pistas, reservas y polideportivos desde la API
   const fetchData = useCallback(async () => {
@@ -125,8 +122,13 @@ export default function AdminPanel({ navigation }) {
     fetchData();
   }, [fetchData]);
 
-  // Agrupar pistas por tipo para el SectionList
-  const pistasPorTipo = pistas.reduce((acc, pista) => {
+  // Filtrar pistas por polideportivo
+  const pistasFiltradas = filtroPolideportivo === 'todos' 
+    ? pistas 
+    : pistas.filter(pista => pista.polideportivo_id.toString() === filtroPolideportivo);
+
+  // Agrupar pistas por tipo
+  const pistasPorTipo = pistasFiltradas.reduce((acc, pista) => {
     const tipo = pista.tipo;
     if (!acc[tipo]) {
       acc[tipo] = [];
@@ -139,6 +141,26 @@ export default function AdminPanel({ navigation }) {
     title: tipo,
     data: pistasPorTipo[tipo]
   }));
+
+  // Obtener icono según el tipo de pista
+  const getIconoTipoPista = (tipo) => {
+    switch (tipo) {
+      case 'Fútbol':
+        return '⚽';
+      case 'Baloncesto':
+        return '🏀';
+      case 'Tenis':
+        return '🎾';
+      case 'Padel':
+        return '🎯';
+      case 'Voley':
+        return '🏐';
+      case 'Futbol Sala':
+        return '👟';
+      default:
+        return '🏟️';
+    }
+  };
 
   // Agregar nueva pista
   const agregarPista = async () => {
@@ -186,6 +208,7 @@ export default function AdminPanel({ navigation }) {
       setNuevoPolideportivo(null);
       setOpen(false);
       setOpenPolideportivo(false);
+      setModalPistaVisible(false);
       Alert.alert('Éxito', 'Pista agregada correctamente');
     } catch (error) {
       console.error('Error al agregar pista:', error);
@@ -240,17 +263,29 @@ export default function AdminPanel({ navigation }) {
     }
   };
 
-  // Eliminar polideportivo
-  const eliminarPolideportivo = (id) => {
+  // Eliminar polideportivo - CORREGIDO
+  const eliminarPolideportivo = async (id) => {
+    // Verificar si hay pistas asociadas a este polideportivo
+    const pistasAsociadas = pistas.filter(pista => pista.polideportivo_id === id);
+    
+    if (pistasAsociadas.length > 0) {
+      Alert.alert(
+        'No se puede eliminar',
+        `Este polideportivo tiene ${pistasAsociadas.length} pista(s) asociada(s). Elimina primero todas las pistas antes de eliminar el polideportivo.`,
+        [{ text: 'Entendido', style: 'cancel' }]
+      );
+      return;
+    }
+
     if (Platform.OS === 'web') {
-      const confirmar = window.confirm('¿Estás seguro de que deseas eliminar este polideportivo? Se eliminarán todas sus pistas.');
+      const confirmar = window.confirm('¿Estás seguro de que deseas eliminar este polideportivo?');
       if (confirmar) {
-        handleEliminarPolideportivo(id);
+        await handleEliminarPolideportivo(id);
       }
     } else {
       Alert.alert(
         'Confirmar eliminación',
-        '¿Estás seguro de que deseas eliminar este polideportivo? Se eliminarán todas sus pistas.',
+        '¿Estás seguro de que deseas eliminar este polideportivo?',
         [
           { text: 'Cancelar', style: 'cancel' },
           {
@@ -277,9 +312,6 @@ export default function AdminPanel({ navigation }) {
       setPolideportivos((prevPolideportivos) => prevPolideportivos.filter((polideportivo) => polideportivo.id !== id));
       setPolideportivosItems(prev => prev.filter(item => item.value !== id));
       
-      // También eliminar pistas asociadas a este polideportivo
-      setPistas((prevPistas) => prevPistas.filter((pista) => pista.polideportivo_id !== id));
-      
       Alert.alert('Éxito', 'Polideportivo eliminado correctamente');
     } catch (error) {
       console.error('Error al eliminar polideportivo:', error);
@@ -288,11 +320,11 @@ export default function AdminPanel({ navigation }) {
   };
 
   // Eliminar pista
-  const eliminarPista = (id) => {
+  const eliminarPista = async (id) => {
     if (Platform.OS === 'web') {
       const confirmar = window.confirm('¿Estás seguro de que deseas eliminar esta pista?');
       if (confirmar) {
-        handleEliminar(id);
+        await handleEliminar(id);
       }
     } else {
       Alert.alert(
@@ -329,11 +361,11 @@ export default function AdminPanel({ navigation }) {
     }
   };
 
-  const cancelarReserva = (id) => {
+  const cancelarReserva = async (id) => {
     if (Platform.OS === 'web') {
       const confirmar = window.confirm('¿Estás seguro de que deseas eliminar esta reserva?');
       if (confirmar) {
-        handleCancelarReserva(id);
+        await handleCancelarReserva(id);
       }
     } else {
       Alert.alert(
@@ -455,21 +487,19 @@ export default function AdminPanel({ navigation }) {
   const renderPolideportivoItem = ({ item }) => (
     <View style={[
       styles.polideportivoCard, 
-      isLargeScreen && styles.polideportivoCardLarge,
-      isSmallScreen && styles.polideportivoCardSmall
+      isLargeScreen && styles.polideportivoCardLarge
     ]}>
       <View style={styles.polideportivoHeader}>
         <View style={styles.polideportivoInfo}>
           <Text style={[
             styles.polideportivoNombre, 
-            isLargeScreen && styles.polideportivoNombreLarge,
-            isSmallScreen && styles.polideportivoNombreSmall
+            isLargeScreen && styles.polideportivoNombreLarge
           ]}>
-            {item.nombre}
+            🏟️ {item.nombre}
           </Text>
-          <Text style={styles.polideportivoDireccion}>{item.direccion}</Text>
+          <Text style={styles.polideportivoDireccion}>📍 {item.direccion}</Text>
           {item.telefono && (
-            <Text style={styles.polideportivoTelefono}>Tel: {item.telefono}</Text>
+            <Text style={styles.polideportivoTelefono}>📞 Tel: {item.telefono}</Text>
           )}
         </View>
         <View style={styles.pistasCountContainer}>
@@ -482,22 +512,20 @@ export default function AdminPanel({ navigation }) {
       <TouchableOpacity
         style={[
           styles.botonAccion, 
-          styles.botonEliminar, 
-          isLargeScreen && styles.botonAccionLarge,
-          isSmallScreen && styles.botonAccionSmall
+          styles.botonEliminar,
+          isLargeScreen && styles.botonAccionLarge
         ]}
         onPress={() => eliminarPolideportivo(item.id)}
       >
         <Ionicons 
           name="trash-outline" 
-          size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+          size={isLargeScreen ? 24 : 20} 
           color="#F44336" 
         />
         <Text style={[
           styles.textoAccion, 
-          styles.textoEliminar, 
-          isLargeScreen && styles.textoAccionLarge,
-          isSmallScreen && styles.textoAccionSmall
+          styles.textoEliminar,
+          isLargeScreen && styles.textoAccionLarge
         ]}>
           Eliminar
         </Text>
@@ -509,20 +537,18 @@ export default function AdminPanel({ navigation }) {
   const renderPistaItem = ({ item }) => (
     <View style={[
       styles.pistaCard, 
-      isLargeScreen && styles.pistaCardLarge,
-      isSmallScreen && styles.pistaCardSmall
+      isLargeScreen && styles.pistaCardLarge
     ]}>
       <View style={styles.pistaHeader}>
         <View style={styles.pistaInfo}>
           <Text style={[
             styles.pistaNombre, 
-            isLargeScreen && styles.pistaNombreLarge,
-            isSmallScreen && styles.pistaNombreSmall
+            isLargeScreen && styles.pistaNombreLarge
           ]}>
-            {item.nombre}
+            {getIconoTipoPista(item.tipo)} {item.nombre}
           </Text>
           <Text style={styles.pistaDetalles}>
-            {obtenerNombrePolideportivo(item.polideportivo_id)} • {item.precio} €/hora
+            🏟️ {obtenerNombrePolideportivo(item.polideportivo_id)} • 💰 {item.precio} €/hora
           </Text>
         </View>
         <View style={styles.estadoContainer}>
@@ -531,33 +557,30 @@ export default function AdminPanel({ navigation }) {
             { backgroundColor: item.enMantenimiento ? '#FFA500' : '#4CAF50' }
           ]} />
           <Text style={styles.estadoTexto}>
-            {item.enMantenimiento ? 'En mantenimiento' : 'Disponible'}
+            {item.enMantenimiento ? '🛠️ En mantenimiento' : '✅ Disponible'}
           </Text>
         </View>
       </View>
 
       <View style={[
         styles.accionesContainer, 
-        isLargeScreen && styles.accionesContainerLarge,
-        isSmallScreen && { flexDirection: 'column', alignItems: 'flex-start' }
+        isLargeScreen && styles.accionesContainerLarge
       ]}>
         <TouchableOpacity
           style={[
-            styles.botonAccion, 
-            isLargeScreen && styles.botonAccionLarge,
-            isSmallScreen && styles.botonAccionSmall
+            styles.botonAccion,
+            isLargeScreen && styles.botonAccionLarge
           ]}
           onPress={() => toggleMantenimiento(item.id)}
         >
           <MaterialIcons
             name={item.enMantenimiento ? 'handyman' : 'construction'}
-            size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)}
+            size={isLargeScreen ? 24 : 20}
             color={item.enMantenimiento ? '#FFA500' : '#607D8B'}
           />
           <Text style={[
-            styles.textoAccion, 
-            isLargeScreen && styles.textoAccionLarge,
-            isSmallScreen && styles.textoAccionSmall
+            styles.textoAccion,
+            isLargeScreen && styles.textoAccionLarge
           ]}>
             {item.enMantenimiento ? 'Reactivar' : 'Mantenimiento'}
           </Text>
@@ -565,21 +588,19 @@ export default function AdminPanel({ navigation }) {
 
         <TouchableOpacity
           style={[
-            styles.botonAccion, 
-            isLargeScreen && styles.botonAccionLarge,
-            isSmallScreen && styles.botonAccionSmall
+            styles.botonAccion,
+            isLargeScreen && styles.botonAccionLarge
           ]}
           onPress={() => abrirModalEditar(item)}
         >
           <Ionicons 
             name="pencil-outline" 
-            size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+            size={isLargeScreen ? 24 : 20} 
             color="#3498DB" 
           />
           <Text style={[
-            styles.textoAccion, 
-            isLargeScreen && styles.textoAccionLarge,
-            isSmallScreen && styles.textoAccionSmall
+            styles.textoAccion,
+            isLargeScreen && styles.textoAccionLarge
           ]}>
             Editar Precio
           </Text>
@@ -588,22 +609,20 @@ export default function AdminPanel({ navigation }) {
         <TouchableOpacity
           style={[
             styles.botonAccion, 
-            styles.botonEliminar, 
-            isLargeScreen && styles.botonAccionLarge,
-            isSmallScreen && styles.botonAccionSmall
+            styles.botonEliminar,
+            isLargeScreen && styles.botonAccionLarge
           ]}
           onPress={() => eliminarPista(item.id)}
         >
           <Ionicons 
             name="trash-outline" 
-            size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+            size={isLargeScreen ? 24 : 20} 
             color="#F44336" 
           />
           <Text style={[
             styles.textoAccion, 
-            styles.textoEliminar, 
-            isLargeScreen && styles.textoAccionLarge,
-            isSmallScreen && styles.textoAccionSmall
+            styles.textoEliminar,
+            isLargeScreen && styles.textoAccionLarge
           ]}>
             Eliminar
           </Text>
@@ -616,22 +635,19 @@ export default function AdminPanel({ navigation }) {
   const renderReservaItem = ({ item }) => (
     <View style={[
       styles.reservaCard, 
-      isLargeScreen && styles.reservaCardLarge,
-      isSmallScreen && styles.reservaCardSmall
+      isLargeScreen && styles.reservaCardLarge
     ]}>
       <View style={styles.reservaHeader}>
         <View style={styles.reservaInfoPrincipal}>
           <Text style={[
             styles.reservaNombrePista, 
-            isLargeScreen && styles.reservaNombrePistaLarge,
-            isSmallScreen && styles.reservaNombrePistaSmall
+            isLargeScreen && styles.reservaNombrePistaLarge
           ]}>
             {item.pistaNombre || item.pista}
           </Text>
           <Text style={[
             styles.reservaTipo, 
-            isLargeScreen && styles.reservaTipoLarge,
-            isSmallScreen && styles.reservaTipoSmall
+            isLargeScreen && styles.reservaTipoLarge
           ]}>
             {item.pistaTipo || 'Pista'}
           </Text>
@@ -653,29 +669,25 @@ export default function AdminPanel({ navigation }) {
       <View style={styles.reservaInfo}>
         <Text style={[
           styles.reservaTexto, 
-          isLargeScreen && styles.reservaTextoLarge,
-          isSmallScreen && styles.reservaTextoSmall
+          isLargeScreen && styles.reservaTextoLarge
         ]}>
           👤 Usuario: {item.nombre_usuario || 'Desconocido'}
         </Text>
         <Text style={[
           styles.reservaTexto, 
-          isLargeScreen && styles.reservaTextoLarge,
-          isSmallScreen && styles.reservaTextoSmall
+          isLargeScreen && styles.reservaTextoLarge
         ]}>
           📅 Fecha: {new Date(item.fecha).toLocaleDateString('es-ES')}
         </Text>
         <Text style={[
           styles.reservaTexto, 
-          isLargeScreen && styles.reservaTextoLarge,
-          isSmallScreen && styles.reservaTextoSmall
+          isLargeScreen && styles.reservaTextoLarge
         ]}>
           ⏰ Hora: {item.hora_inicio} - {item.hora_fin}
         </Text>
         <Text style={[
           styles.reservaTexto, 
-          isLargeScreen && styles.reservaTextoLarge,
-          isSmallScreen && styles.reservaTextoSmall
+          isLargeScreen && styles.reservaTextoLarge
         ]}>
           💰 Precio: {(() => {
             const precioNum = Number(item.precio);
@@ -686,8 +698,7 @@ export default function AdminPanel({ navigation }) {
           <Text style={[
             styles.reservaTexto, 
             styles.reservaLudoteca,
-            isLargeScreen && styles.reservaTextoLarge,
-            isSmallScreen && styles.reservaTextoSmall
+            isLargeScreen && styles.reservaTextoLarge
           ]}>
             🎯 Incluye ludoteca
           </Text>
@@ -697,22 +708,20 @@ export default function AdminPanel({ navigation }) {
       <TouchableOpacity
         style={[
           styles.botonAccion, 
-          styles.botonCancelar, 
-          isLargeScreen && styles.botonAccionLarge,
-          isSmallScreen && styles.botonAccionSmall
+          styles.botonCancelar,
+          isLargeScreen && styles.botonAccionLarge
         ]}
         onPress={() => cancelarReserva(item.id)}
       >
         <Ionicons 
           name="close-circle-outline" 
-          size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+          size={isLargeScreen ? 24 : 20} 
           color="#F44336" 
         />
         <Text style={[
           styles.textoAccion, 
-          styles.textoEliminar, 
-          isLargeScreen && styles.textoAccionLarge,
-          isSmallScreen && styles.textoAccionSmall
+          styles.textoEliminar,
+          isLargeScreen && styles.textoAccionLarge
         ]}>
           Cancelar
         </Text>
@@ -720,18 +729,17 @@ export default function AdminPanel({ navigation }) {
     </View>
   );
 
-  const renderSectionHeader = ({ section: { title } }) => (
+  // CORREGIDO: Función para renderizar secciones
+  const renderSectionHeader = ({ section }) => (
     <View style={[
       styles.sectionHeader, 
-      isLargeScreen && styles.sectionHeaderLarge,
-      isSmallScreen && styles.sectionHeaderSmall
+      isLargeScreen && styles.sectionHeaderLarge
     ]}>
       <Text style={[
         styles.sectionHeaderText, 
-        isLargeScreen && styles.sectionHeaderTextLarge,
-        isSmallScreen && styles.sectionHeaderTextSmall
+        isLargeScreen && styles.sectionHeaderTextLarge
       ]}>
-        {title}
+        {getIconoTipoPista(section.title)} {section.title} ({section.data.length})
       </Text>
     </View>
   );
@@ -742,33 +750,33 @@ export default function AdminPanel({ navigation }) {
       case 'polideportivos':
         return (
           <View style={styles.tabContent}>
-            <View style={styles.listHeader}>
+            <View style={[
+              styles.listHeader,
+              isLargeScreen && styles.listHeaderLarge
+            ]}>
               <View style={styles.seccionHeader}>
                 <Text style={[
                   styles.seccionTitulo, 
-                  isLargeScreen && styles.seccionTituloLarge,
-                  isSmallScreen && styles.seccionTituloSmall
+                  isLargeScreen && styles.seccionTituloLarge
                 ]}>
-                  Polideportivos ({polideportivos.length})
+                  🏟️ Polideportivos ({polideportivos.length})
                 </Text>
                 <TouchableOpacity
                   style={[
                     styles.botonAgregar,
-                    isLargeScreen && styles.botonAgregarLarge,
-                    isSmallScreen && styles.botonAgregarSmall
+                    isLargeScreen && styles.botonAgregarLarge
                   ]}
                   onPress={() => setModalPolideportivoVisible(true)}
                 >
                   <Text style={[
                     styles.botonAgregarTexto, 
-                    isLargeScreen && styles.botonAgregarTextoLarge,
-                    isSmallScreen && styles.botonAgregarTextoSmall
+                    isLargeScreen && styles.botonAgregarTextoLarge
                   ]}>
                     Agregar
                   </Text>
                   <Ionicons 
                     name="add-circle-outline" 
-                    size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
+                    size={isLargeScreen ? 24 : 20} 
                     color="white" 
                   />
                 </TouchableOpacity>
@@ -779,23 +787,20 @@ export default function AdminPanel({ navigation }) {
               <View style={styles.listaVaciaContainer}>
                 <Text style={[
                   styles.listaVacia, 
-                  isLargeScreen && styles.listaVaciaLarge,
-                  isSmallScreen && styles.listaVaciaSmall
+                  isLargeScreen && styles.listaVaciaLarge
                 ]}>
                   No hay polideportivos registrados
                 </Text>
                 <TouchableOpacity
                   style={[
                     styles.botonAgregar,
-                    isLargeScreen && styles.botonAgregarLarge,
-                    isSmallScreen && styles.botonAgregarSmall
+                    isLargeScreen && styles.botonAgregarLarge
                   ]}
                   onPress={() => setModalPolideportivoVisible(true)}
                 >
                   <Text style={[
                     styles.botonAgregarTexto, 
-                    isLargeScreen && styles.botonAgregarTextoLarge,
-                    isSmallScreen && styles.botonAgregarTextoSmall
+                    isLargeScreen && styles.botonAgregarTextoLarge
                   ]}>
                     Agregar Primer Polideportivo
                   </Text>
@@ -817,165 +822,117 @@ export default function AdminPanel({ navigation }) {
         return (
           <View style={styles.tabContent}>
             <View style={[
-              styles.formularioContainer, 
-              isLargeScreen && styles.formularioContainerLarge,
-              isSmallScreen && styles.formularioContainerSmall
+              styles.listHeader,
+              isLargeScreen && styles.listHeaderLarge
             ]}>
-              <Text style={[
-                styles.seccionTitulo, 
-                isLargeScreen && styles.seccionTituloLarge,
-                isSmallScreen && styles.seccionTituloSmall
-              ]}>
-                Agregar Nueva Pista
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.input, 
-                  isLargeScreen && styles.inputLarge,
-                  isSmallScreen && styles.inputSmall
-                ]}
-                placeholder="Nombre de la pista"
-                value={nuevoNombre}
-                onChangeText={text => {
-                  setNuevoNombre(text);
-                  setErrorNombreRepetido('');
-                }}
-                placeholderTextColor="#999"
-              />
-              {errorNombreRepetido ? (
+              <View style={styles.seccionHeader}>
                 <Text style={[
-                  styles.errorTexto, 
-                  isLargeScreen && styles.errorTextoLarge,
-                  isSmallScreen && styles.errorTextoSmall
+                  styles.seccionTitulo, 
+                  isLargeScreen && styles.seccionTituloLarge
                 ]}>
-                  {errorNombreRepetido}
+                  🎾 Pistas ({pistasFiltradas.length})
                 </Text>
-              ) : null}
-
-              <DropDownPicker
-                open={open}
-                value={nuevoTipo}
-                items={items}
-                setOpen={setOpen}
-                setValue={setNuevoTipo}
-                setItems={setItems}
-                placeholder="Seleccionar tipo"
-                style={[
-                  styles.dropdown, 
-                  isLargeScreen && styles.dropdownLarge,
-                  isSmallScreen && styles.dropdownSmall
-                ]}
-                dropDownContainerStyle={[
-                  styles.dropdownContainer, 
-                  isLargeScreen && styles.dropdownContainerLarge,
-                  isSmallScreen && styles.dropdownContainerSmall
-                ]}
-                zIndex={3000}
-                zIndexInverse={1000}
-              />
-
-              <DropDownPicker
-                open={openPolideportivo}
-                value={nuevoPolideportivo}
-                items={polideportivosItems}
-                setOpen={setOpenPolideportivo}
-                setValue={setNuevoPolideportivo}
-                setItems={setPolideportivosItems}
-                placeholder="Seleccionar polideportivo"
-                style={[
-                  styles.dropdown, 
-                  isLargeScreen && styles.dropdownLarge,
-                  isSmallScreen && styles.dropdownSmall
-                ]}
-                dropDownContainerStyle={[
-                  styles.dropdownContainer, 
-                  isLargeScreen && styles.dropdownContainerLarge,
-                  isSmallScreen && styles.dropdownContainerSmall
-                ]}
-                zIndex={2000}
-                zIndexInverse={2000}
-              />
-
-              <TextInput
-                style={[
-                  styles.input, 
-                  isLargeScreen && styles.inputLarge,
-                  isSmallScreen && styles.inputSmall
-                ]}
-                placeholder="Precio por hora (€)"
-                value={nuevoPrecio}
-                onChangeText={setNuevoPrecio}
-                keyboardType="numeric"
-                placeholderTextColor="#999"
-              />
-
-              <TouchableOpacity
-                style={[
-                  styles.botonAgregar,
-                  (!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo) && styles.botonDisabled,
-                  isLargeScreen && styles.botonAgregarLarge,
-                  isSmallScreen && styles.botonAgregarSmall
-                ]}
-                onPress={agregarPista}
-                disabled={!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo}
-              >
-                <Text style={[
-                  styles.botonAgregarTexto, 
-                  isLargeScreen && styles.botonAgregarTextoLarge,
-                  isSmallScreen && styles.botonAgregarTextoSmall
-                ]}>
-                  Agregar Pista
-                </Text>
-                <Ionicons 
-                  name="add-circle-outline" 
-                  size={isLargeScreen ? 24 : (isSmallScreen ? 16 : 20)} 
-                  color="white" 
-                />
-              </TouchableOpacity>
-            </View>
-
-            <View style={[
-              styles.listaContainer, 
-              isLargeScreen && styles.listaContainerLarge,
-              isSmallScreen && styles.listaContainerSmall
-            ]}>
-              <Text style={[
-                styles.seccionTitulo, 
-                isLargeScreen && styles.seccionTituloLarge,
-                isSmallScreen && styles.seccionTituloSmall
-              ]}>
-                Pistas Disponibles ({pistas.length})
-              </Text>
-
-              {pistas.length === 0 ? (
-                <View style={styles.listaVaciaContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.botonAgregar,
+                    isLargeScreen && styles.botonAgregarLarge
+                  ]}
+                  onPress={() => setModalPistaVisible(true)}
+                >
                   <Text style={[
-                    styles.listaVacia, 
-                    isLargeScreen && styles.listaVaciaLarge,
-                    isSmallScreen && styles.listaVaciaSmall
+                    styles.botonAgregarTexto, 
+                    isLargeScreen && styles.botonAgregarTextoLarge
                   ]}>
-                    No hay pistas registradas
+                    Agregar Pista
                   </Text>
-                  <Text style={styles.listaVaciaSubtexto}>
-                    Agrega tu primera pista usando el formulario superior
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.listContent}>
-                  {sections.map((section, index) => (
-                    <View key={`section-${index}`}>
-                      {renderSectionHeader({ section: { title: section.title } })}
-                      {section.data.map((pista) => (
-                        <View key={pista.id}>
-                          {renderPistaItem({ item: pista })}
-                        </View>
-                      ))}
-                    </View>
+                  <Ionicons 
+                    name="add-circle-outline" 
+                    size={isLargeScreen ? 24 : 20} 
+                    color="white" 
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* Filtro por polideportivo */}
+              <View style={styles.filtroContainer}>
+                <Text style={[
+                  styles.filtroLabel,
+                  isLargeScreen && styles.filtroLabelLarge
+                ]}>
+                  Filtrar por polideportivo:
+                </Text>
+                <View style={styles.filtroBotones}>
+                  <TouchableOpacity
+                    style={[
+                      styles.filtroBoton,
+                      filtroPolideportivo === 'todos' && styles.filtroBotonActivo,
+                      isLargeScreen && styles.filtroBotonLarge
+                    ]}
+                    onPress={() => setFiltroPolideportivo('todos')}
+                  >
+                    <Text style={[
+                      styles.filtroBotonTexto,
+                      filtroPolideportivo === 'todos' && styles.filtroBotonTextoActivo,
+                      isLargeScreen && styles.filtroBotonTextoLarge
+                    ]}>
+                      Todos
+                    </Text>
+                  </TouchableOpacity>
+                  {polideportivos.map(polideportivo => (
+                    <TouchableOpacity
+                      key={polideportivo.id}
+                      style={[
+                        styles.filtroBoton,
+                        filtroPolideportivo === polideportivo.id.toString() && styles.filtroBotonActivo,
+                        isLargeScreen && styles.filtroBotonLarge
+                      ]}
+                      onPress={() => setFiltroPolideportivo(polideportivo.id.toString())}
+                    >
+                      <Text style={[
+                        styles.filtroBotonTexto,
+                        filtroPolideportivo === polideportivo.id.toString() && styles.filtroBotonTextoActivo,
+                        isLargeScreen && styles.filtroBotonTextoLarge
+                      ]}>
+                        {polideportivo.nombre}
+                      </Text>
+                    </TouchableOpacity>
                   ))}
                 </View>
-              )}
+              </View>
             </View>
+
+            {pistasFiltradas.length === 0 ? (
+              <View style={styles.listaVaciaContainer}>
+                <Text style={[
+                  styles.listaVacia, 
+                  isLargeScreen && styles.listaVaciaLarge
+                ]}>
+                  {filtroPolideportivo === 'todos' 
+                    ? 'No hay pistas registradas' 
+                    : 'No hay pistas en este polideportivo'
+                  }
+                </Text>
+                <Text style={styles.listaVaciaSubtexto}>
+                  {filtroPolideportivo === 'todos' 
+                    ? 'Agrega tu primera pista usando el botón superior' 
+                    : 'Cambia el filtro o agrega pistas a este polideportivo'
+                  }
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.listContent}>
+                {sections.map((section, index) => (
+                  <View key={`section-${index}`}>
+                    {renderSectionHeader({ section })}
+                    {section.data.map((pista) => (
+                      <View key={pista.id}>
+                        {renderPistaItem({ item: pista })}
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         );
 
@@ -983,16 +940,14 @@ export default function AdminPanel({ navigation }) {
         return (
           <View style={styles.tabContent}>
             <View style={[
-              styles.listaContainer, 
-              isLargeScreen && styles.listaContainerLarge,
-              isSmallScreen && styles.listaContainerSmall
+              styles.listaContainer,
+              isLargeScreen && styles.listaContainerLarge
             ]}>
               <Text style={[
                 styles.seccionTitulo, 
-                isLargeScreen && styles.seccionTituloLarge,
-                isSmallScreen && styles.seccionTituloSmall
+                isLargeScreen && styles.seccionTituloLarge
               ]}>
-                Reservas Activas ({reservas.length})
+                📋 Reservas Activas ({reservas.length})
               </Text>
             </View>
             
@@ -1000,8 +955,7 @@ export default function AdminPanel({ navigation }) {
               <View style={styles.listaVaciaContainer}>
                 <Text style={[
                   styles.listaVacia, 
-                  isLargeScreen && styles.listaVaciaLarge,
-                  isSmallScreen && styles.listaVaciaSmall
+                  isLargeScreen && styles.listaVaciaLarge
                 ]}>
                   No hay reservas activas
                 </Text>
@@ -1039,7 +993,123 @@ export default function AdminPanel({ navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* Modales (mantener igual) */}
+      {/* Modal para agregar pista */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalPistaVisible}
+        onRequestClose={() => setModalPistaVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[
+            styles.modalContent,
+            isLargeScreen && styles.modalContentLarge
+          ]}>
+            <Text style={[
+              styles.modalTitle,
+              isLargeScreen && styles.modalTitleLarge
+            ]}>
+              🎾 Agregar Nueva Pista
+            </Text>
+            
+            <TextInput
+              style={[
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
+              ]}
+              placeholder="Nombre de la pista"
+              value={nuevoNombre}
+              onChangeText={text => {
+                setNuevoNombre(text);
+                setErrorNombreRepetido('');
+              }}
+              placeholderTextColor="#999"
+            />
+            {errorNombreRepetido ? (
+              <Text style={[
+                styles.errorTexto,
+                isLargeScreen && styles.errorTextoLarge
+              ]}>
+                {errorNombreRepetido}
+              </Text>
+            ) : null}
+
+            <DropDownPicker
+              open={open}
+              value={nuevoTipo}
+              items={items}
+              setOpen={setOpen}
+              setValue={setNuevoTipo}
+              setItems={setItems}
+              placeholder="Seleccionar tipo"
+              style={[
+                styles.dropdown,
+                isLargeScreen && styles.dropdownLarge
+              ]}
+              dropDownContainerStyle={[
+                styles.dropdownContainer,
+                isLargeScreen && styles.dropdownContainerLarge
+              ]}
+              zIndex={3000}
+              zIndexInverse={1000}
+            />
+
+            <DropDownPicker
+              open={openPolideportivo}
+              value={nuevoPolideportivo}
+              items={polideportivosItems}
+              setOpen={setOpenPolideportivo}
+              setValue={setNuevoPolideportivo}
+              setItems={setPolideportivosItems}
+              placeholder="Seleccionar polideportivo"
+              style={[
+                styles.dropdown,
+                isLargeScreen && styles.dropdownLarge
+              ]}
+              dropDownContainerStyle={[
+                styles.dropdownContainer,
+                isLargeScreen && styles.dropdownContainerLarge
+              ]}
+              zIndex={2000}
+              zIndexInverse={2000}
+            />
+
+            <TextInput
+              style={[
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
+              ]}
+              placeholder="Precio por hora (€)"
+              value={nuevoPrecio}
+              onChangeText={setNuevoPrecio}
+              keyboardType="numeric"
+              placeholderTextColor="#999"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setModalPistaVisible(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton, 
+                  styles.modalButtonSave,
+                  (!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo) && styles.botonDisabled
+                ]}
+                onPress={agregarPista}
+                disabled={!nuevoNombre.trim() || !nuevoTipo || !nuevoPrecio || !nuevoPolideportivo}
+              >
+                <Text style={styles.modalButtonText}>Agregar Pista</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para editar precio */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -1048,14 +1118,12 @@ export default function AdminPanel({ navigation }) {
       >
         <View style={styles.modalContainer}>
           <View style={[
-            styles.modalContent, 
-            isLargeScreen && styles.modalContentLarge,
-            isSmallScreen && styles.modalContentSmall
+            styles.modalContent,
+            isLargeScreen && styles.modalContentLarge
           ]}>
             <Text style={[
-              styles.modalTitle, 
-              isLargeScreen && styles.modalTitleLarge,
-              isSmallScreen && styles.modalTitleSmall
+              styles.modalTitle,
+              isLargeScreen && styles.modalTitleLarge
             ]}>
               Editar Precio
             </Text>
@@ -1068,9 +1136,8 @@ export default function AdminPanel({ navigation }) {
             
             <TextInput
               style={[
-                styles.modalInput, 
-                isLargeScreen && styles.modalInputLarge,
-                isSmallScreen && styles.modalInputSmall
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
               ]}
               placeholder="Nuevo precio"
               value={precioEditando}
@@ -1097,6 +1164,7 @@ export default function AdminPanel({ navigation }) {
         </View>
       </Modal>
 
+      {/* Modal para agregar polideportivo */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -1105,23 +1173,20 @@ export default function AdminPanel({ navigation }) {
       >
         <View style={styles.modalContainer}>
           <View style={[
-            styles.modalContent, 
-            isLargeScreen && styles.modalContentLarge,
-            isSmallScreen && styles.modalContentSmall
+            styles.modalContent,
+            isLargeScreen && styles.modalContentLarge
           ]}>
             <Text style={[
-              styles.modalTitle, 
-              isLargeScreen && styles.modalTitleLarge,
-              isSmallScreen && styles.modalTitleSmall
+              styles.modalTitle,
+              isLargeScreen && styles.modalTitleLarge
             ]}>
-              Agregar Polideportivo
+              🏟️ Agregar Polideportivo
             </Text>
             
             <TextInput
               style={[
-                styles.modalInput, 
-                isLargeScreen && styles.modalInputLarge,
-                isSmallScreen && styles.modalInputSmall
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
               ]}
               placeholder="Nombre del polideportivo"
               value={nuevoPolideportivoNombre}
@@ -1131,9 +1196,8 @@ export default function AdminPanel({ navigation }) {
             
             <TextInput
               style={[
-                styles.modalInput, 
-                isLargeScreen && styles.modalInputLarge,
-                isSmallScreen && styles.modalInputSmall
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
               ]}
               placeholder="Dirección"
               value={nuevoPolideportivoDireccion}
@@ -1143,9 +1207,8 @@ export default function AdminPanel({ navigation }) {
 
             <TextInput
               style={[
-                styles.modalInput, 
-                isLargeScreen && styles.modalInputLarge,
-                isSmallScreen && styles.modalInputSmall
+                styles.modalInput,
+                isLargeScreen && styles.modalInputLarge
               ]}
               placeholder="Teléfono (opcional)"
               value={nuevoPolideportivoTelefono}
@@ -1172,59 +1235,60 @@ export default function AdminPanel({ navigation }) {
         </View>
       </Modal>
 
-      {/* ESTRUCTURA IDÉNTICA AL SELECTOR - CON SCROLL FUNCIONAL */}
+      {/* ESTRUCTURA CON SCROLL FUNCIONAL */}
       <FlatList
-        data={[]} // Datos vacíos ya que usamos ListHeaderComponent para todo
+        data={[]}
         keyExtractor={(item, index) => index.toString()}
         
-        // Header fijo con navegación + todo el contenido
         ListHeaderComponent={
           <>
-            {/* Header fijo igual al Selector */}
-            <View style={styles.header}>
-              <View style={styles.headerContent}>
+            {/* Header */}
+            <View style={[
+              styles.header,
+              isLargeScreen && styles.headerLarge
+            ]}>
+              <View style={[
+                styles.headerContent,
+                isLargeScreen && styles.headerContentLarge
+              ]}>
                 <View style={styles.headerTop}>
                   <TouchableOpacity
                     onPress={() => navigation.goBack()}
-                    style={[
-                      styles.backButton,
-                      isHoveredBack && styles.backButtonHovered
-                    ]}
-                    activeOpacity={0.8}
-                    onMouseEnter={() => Platform.OS === 'web' && setIsHoveredBack(true)}
-                    onMouseLeave={() => Platform.OS === 'web' && setIsHoveredBack(false)}
+                    style={styles.backButton}
                   >
                     <Ionicons name="arrow-back" size={24} color="#fff" />
                     <Text style={styles.backText}>Volver</Text>
                   </TouchableOpacity>
                   
-                  <Text style={styles.welcomeText}>Panel de Administración</Text>
+                  <Text style={[
+                    styles.welcomeText,
+                    isLargeScreen && styles.welcomeTextLarge
+                  ]}>
+                    Panel de Administración
+                  </Text>
                 </View>
                 
                 <Text style={styles.username}>Bienvenido, {usuario?.nombre || 'Administrador'}</Text>
                 
                 {/* Tabs de navegación */}
                 <View style={[
-                  styles.tabsContainer, 
-                  isLargeScreen && styles.tabsContainerLarge,
-                  isSmallScreen && styles.tabsContainerSmall
+                  styles.tabsContainer,
+                  isLargeScreen && styles.tabsContainerLarge
                 ]}>
                   <TouchableOpacity
                     style={[
                       styles.tabButton, 
                       activeTab === 'polideportivos' && styles.activeTab,
-                      isLargeScreen && styles.tabButtonLarge,
-                      isSmallScreen && styles.tabButtonSmall
+                      isLargeScreen && styles.tabButtonLarge
                     ]}
                     onPress={() => setActiveTab('polideportivos')}
                   >
                     <Text style={[
                       styles.tabText, 
                       activeTab === 'polideportivos' && styles.activeTabText,
-                      isLargeScreen && styles.tabTextLarge,
-                      isSmallScreen && styles.tabTextSmall
+                      isLargeScreen && styles.tabTextLarge
                     ]}>
-                      Polideportivos
+                      🏟️ Polideportivos
                     </Text>
                   </TouchableOpacity>
                   
@@ -1232,18 +1296,16 @@ export default function AdminPanel({ navigation }) {
                     style={[
                       styles.tabButton, 
                       activeTab === 'pistas' && styles.activeTab,
-                      isLargeScreen && styles.tabButtonLarge,
-                      isSmallScreen && styles.tabButtonSmall
+                      isLargeScreen && styles.tabButtonLarge
                     ]}
                     onPress={() => setActiveTab('pistas')}
                   >
                     <Text style={[
                       styles.tabText, 
                       activeTab === 'pistas' && styles.activeTabText,
-                      isLargeScreen && styles.tabTextLarge,
-                      isSmallScreen && styles.tabTextSmall
+                      isLargeScreen && styles.tabTextLarge
                     ]}>
-                      Pistas
+                      🎾 Pistas
                     </Text>
                   </TouchableOpacity>
                   
@@ -1251,18 +1313,16 @@ export default function AdminPanel({ navigation }) {
                     style={[
                       styles.tabButton, 
                       activeTab === 'reservas' && styles.activeTab,
-                      isLargeScreen && styles.tabButtonLarge,
-                      isSmallScreen && styles.tabButtonSmall
+                      isLargeScreen && styles.tabButtonLarge
                     ]}
                     onPress={() => setActiveTab('reservas')}
                   >
                     <Text style={[
                       styles.tabText, 
                       activeTab === 'reservas' && styles.activeTabText,
-                      isLargeScreen && styles.tabTextLarge,
-                      isSmallScreen && styles.tabTextSmall
+                      isLargeScreen && styles.tabTextLarge
                     ]}>
-                      Reservas
+                      📋 Reservas
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1270,13 +1330,16 @@ export default function AdminPanel({ navigation }) {
             </View>
 
             {/* Contenido principal */}
-            <View style={styles.content}>
+            <View style={[
+              styles.content,
+              isLargeScreen && styles.contentLarge
+            ]}>
               {renderContent()}
             </View>
           </>
         }
 
-        renderItem={null} // No necesitamos renderizar items individuales
+        renderItem={null}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -1313,32 +1376,20 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: 'white',
     paddingVertical: 16,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        paddingHorizontal: '10%',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-        paddingHorizontal: 20,
-      }
-    }),
+    paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#E1E8ED',
   },
+  headerLarge: {
+    paddingHorizontal: '10%',
+  },
   headerContent: {
     alignItems: 'center',
-    ...Platform.select({
-      web: {
-        maxWidth: 1200,
-        alignSelf: 'center',
-        width: '100%',
-      },
-    }),
+  },
+  headerContentLarge: {
+    maxWidth: 1200,
+    alignSelf: 'center',
+    width: '100%',
   },
   headerTop: {
     flexDirection: 'row',
@@ -1355,9 +1406,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 6,
   },
-  backButtonHovered: {
-    backgroundColor: '#2980B9',
-  },
   backText: {
     color: '#FFFFFF',
     fontWeight: '600',
@@ -1370,14 +1418,9 @@ const styles = StyleSheet.create({
     color: '#2C3E50',
     textAlign: 'center',
     flex: 1,
-    ...Platform.select({
-      web: {
-        fontSize: 24,
-      },
-      small: {
-        fontSize: 20,
-      },
-    }),
+  },
+  welcomeTextLarge: {
+    fontSize: 24,
   },
   username: {
     fontSize: 14,
@@ -1395,11 +1438,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D5DDE5',
     width: '100%',
-    ...Platform.select({
-      web: {
-        maxWidth: 600,
-      },
-    }),
+  },
+  tabsContainerLarge: {
+    maxWidth: 600,
   },
   tabButton: {
     paddingVertical: 10,
@@ -1407,15 +1448,9 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Platform.select({
-      web: {
-        paddingVertical: 12,
-      },
-      small: {
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-      },
-    }),
+  },
+  tabButtonLarge: {
+    paddingVertical: 12,
   },
   activeTab: {
     backgroundColor: '#3498DB',
@@ -1425,14 +1460,9 @@ const styles = StyleSheet.create({
     color: '#7F8C8D',
     fontSize: 13,
     textAlign: 'center',
-    ...Platform.select({
-      web: {
-        fontSize: 14,
-      },
-      small: {
-        fontSize: 12,
-      },
-    }),
+  },
+  tabTextLarge: {
+    fontSize: 14,
   },
   activeTabText: {
     color: 'white',
@@ -1443,69 +1473,67 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 20,
-    ...Platform.select({
-      web: {
-        paddingHorizontal: '10%',
-      },
-      default: {
-        paddingHorizontal: 0,
-      }
-    }),
   },
   content: {
-    ...Platform.select({
-      web: {
-        maxWidth: 1200,
-        alignSelf: 'center',
-        width: '100%',
-      },
-      default: {
-        paddingHorizontal: 16,
-      }
-    }),
+    paddingHorizontal: 16,
+  },
+  contentLarge: {
+    maxWidth: 1200,
+    alignSelf: 'center',
+    width: '100%',
+    paddingHorizontal: '10%',
   },
   tabContent: {
     flex: 1,
   },
 
-  // Formularios - RESPONSIVE
-  formularioContainer: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    padding: 16,
-    margin: 16,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-        marginHorizontal: 'auto',
-        marginVertical: 16,
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 6,
-        elevation: 3,
-      }
-    }),
+  // Filtros - RESPONSIVE
+  filtroContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E1E8ED',
+  },
+  filtroLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2C3E50',
+    marginBottom: 8,
+  },
+  filtroLabelLarge: {
+    fontSize: 16,
+  },
+  filtroBotones: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filtroBoton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    backgroundColor: '#E1E8ED',
     borderWidth: 1,
-    borderColor: '#E1E8ED',
+    borderColor: '#D5DDE5',
   },
-  formularioContainerLarge: {
-    ...Platform.select({
-      web: {
-        padding: 24,
-      },
-      default: {
-        padding: 20,
-      }
-    }),
+  filtroBotonLarge: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  formularioContainerSmall: {
-    padding: 12,
+  filtroBotonActivo: {
+    backgroundColor: '#3498DB',
+    borderColor: '#2980B9',
+  },
+  filtroBotonTexto: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#7F8C8D',
+  },
+  filtroBotonTextoLarge: {
+    fontSize: 14,
+  },
+  filtroBotonTextoActivo: {
+    color: 'white',
   },
 
   // Listas - RESPONSIVE
@@ -1514,48 +1542,30 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     margin: 16,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-        marginHorizontal: 'auto',
-        marginVertical: 16,
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 6,
-        elevation: 3,
-      }
-    }),
     borderWidth: 1,
     borderColor: '#E1E8ED',
+  },
+  listHeaderLarge: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginVertical: 16,
+    padding: 24,
   },
   listaContainer: {
     backgroundColor: 'white',
     borderRadius: 8,
     padding: 16,
     margin: 16,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-        marginHorizontal: 'auto',
-        marginVertical: 16,
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 6,
-        elevation: 3,
-      }
-    }),
+  },
+  listaContainerLarge: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginVertical: 16,
+    padding: 24,
   },
   listContent: {
     paddingHorizontal: 0,
@@ -1567,14 +1577,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2C3E50',
     marginBottom: 16,
-    ...Platform.select({
-      web: {
-        fontSize: 20,
-      },
-      small: {
-        fontSize: 16,
-      },
-    }),
+  },
+  seccionTituloLarge: {
+    fontSize: 20,
   },
   seccionHeader: {
     flexDirection: 'row',
@@ -1594,18 +1599,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#FDFEFE',
     color: '#2C3E50',
-    ...Platform.select({
-      web: {
-        fontSize: 14,
-      },
-    }),
-  },
-  inputLarge: {
-    padding: 14,
-  },
-  inputSmall: {
-    padding: 10,
-    fontSize: 14,
   },
   errorTexto: {
     color: '#E74C3C',
@@ -1616,6 +1609,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FDECEA',
     padding: 8,
     borderRadius: 4,
+  },
+  errorTextoLarge: {
+    fontSize: 14,
   },
 
   // Dropdowns - RESPONSIVE
@@ -1628,13 +1624,13 @@ const styles = StyleSheet.create({
   dropdownLarge: {
     minHeight: 48,
   },
-  dropdownSmall: {
-    minHeight: 42,
-  },
   dropdownContainer: {
     borderColor: '#BDC3C7',
     borderRadius: 6,
     backgroundColor: '#FDFEFE',
+  },
+  dropdownContainerLarge: {
+    minHeight: 48,
   },
 
   // Botones - RESPONSIVE
@@ -1646,13 +1642,11 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 12,
     marginTop: 8,
-    ...Platform.select({
-      web: {
-        padding: 14,
-        maxWidth: 300,
-        alignSelf: 'center',
-      },
-    }),
+  },
+  botonAgregarLarge: {
+    padding: 14,
+    maxWidth: 300,
+    alignSelf: 'center',
   },
   botonDisabled: {
     backgroundColor: '#A9CCE3',
@@ -1662,26 +1656,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginRight: 8,
     fontSize: 15,
-    ...Platform.select({
-      web: {
-        fontSize: 16,
-      },
-      small: {
-        fontSize: 14,
-      },
-    }),
+  },
+  botonAgregarTextoLarge: {
+    fontSize: 16,
   },
 
-  // Estados vacíos
+  // Estados vacíos - RESPONSIVE
   listaVaciaContainer: {
     alignItems: 'center',
     paddingVertical: 40,
     paddingHorizontal: 20,
-    ...Platform.select({
-      web: {
-        paddingVertical: 60,
-      },
-    }),
   },
   listaVacia: {
     textAlign: 'center',
@@ -1689,14 +1673,9 @@ const styles = StyleSheet.create({
     marginVertical: 20,
     fontSize: 16,
     fontStyle: 'italic',
-    ...Platform.select({
-      web: {
-        fontSize: 18,
-      },
-      small: {
-        fontSize: 14,
-      },
-    }),
+  },
+  listaVaciaLarge: {
+    fontSize: 18,
   },
   listaVaciaSubtexto: {
     textAlign: 'center',
@@ -1704,14 +1683,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     fontStyle: 'italic',
-    ...Platform.select({
-      small: {
-        fontSize: 12,
-      },
-    }),
   },
 
-  // Section headers
+  // Section headers - RESPONSIVE
   sectionHeader: {
     backgroundColor: '#F5F7FA',
     paddingVertical: 10,
@@ -1721,24 +1695,18 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderLeftWidth: 4,
     borderLeftColor: '#3498DB',
-    ...Platform.select({
-      web: {
-        marginHorizontal: 16,
-      },
-    }),
+    marginHorizontal: 16,
+  },
+  sectionHeaderLarge: {
+    marginHorizontal: 16,
   },
   sectionHeaderText: {
     fontSize: 15,
     fontWeight: 'bold',
     color: '#2C3E50',
-    ...Platform.select({
-      web: {
-        fontSize: 16,
-      },
-      small: {
-        fontSize: 14,
-      },
-    }),
+  },
+  sectionHeaderTextLarge: {
+    fontSize: 16,
   },
 
   // Tarjetas - RESPONSIVE
@@ -1747,63 +1715,42 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 16,
     marginBottom: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        marginHorizontal: 16,
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 3,
-        elevation: 2,
-        marginHorizontal: 16,
-      }
-    }),
+    marginHorizontal: 16,
     borderWidth: 1,
     borderColor: '#ECF0F1',
+  },
+  polideportivoCardLarge: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
   },
   pistaCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
     padding: 16,
     marginBottom: 12,
-    ...Platform.select({
-      web: {
-        marginHorizontal: 16,
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-      },
-      default: {
-        marginHorizontal: 16,
-      }
-    }),
+    marginHorizontal: 16,
     borderWidth: 1,
     borderColor: '#ECF0F1',
+  },
+  pistaCardLarge: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
   },
   reservaCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
     padding: 16,
     marginBottom: 16,
-    ...Platform.select({
-      web: {
-        marginHorizontal: 16,
-        maxWidth: 800,
-        alignSelf: 'center',
-        width: '100%',
-      },
-      default: {
-        marginHorizontal: 16,
-      }
-    }),
+    marginHorizontal: 16,
     borderWidth: 1,
     borderColor: '#ECF0F1',
+  },
+  reservaCardLarge: {
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
   },
 
   // Contenido de tarjetas - RESPONSIVE
@@ -1822,34 +1769,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    ...Platform.select({
-      web: {
-        fontSize: 17,
-      },
-      small: {
-        fontSize: 15,
-      },
-    }),
+  },
+  polideportivoNombreLarge: {
+    fontSize: 17,
   },
   polideportivoDireccion: {
     fontSize: 14,
     color: '#7F8C8D',
     marginTop: 4,
-    ...Platform.select({
-      small: {
-        fontSize: 13,
-      },
-    }),
   },
   polideportivoTelefono: {
     fontSize: 14,
     color: '#7F8C8D',
     marginTop: 2,
-    ...Platform.select({
-      small: {
-        fontSize: 13,
-      },
-    }),
   },
   pistasCountContainer: {
     backgroundColor: '#E1E8ED',
@@ -1879,39 +1811,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    ...Platform.select({
-      web: {
-        fontSize: 17,
-      },
-      small: {
-        fontSize: 15,
-      },
-    }),
+  },
+  pistaNombreLarge: {
+    fontSize: 17,
   },
   pistaDetalles: {
     fontSize: 14,
     color: '#7F8C8D',
     marginTop: 4,
-    ...Platform.select({
-      small: {
-        fontSize: 13,
-      },
-    }),
   },
   estadoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginLeft: 8,
   },
+  estadoIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
   estadoTexto: {
     fontSize: 14,
     color: '#7F8C8D',
     fontWeight: '500',
-    ...Platform.select({
-      small: {
-        fontSize: 13,
-      },
-    }),
   },
 
   // Acciones - RESPONSIVE
@@ -1922,6 +1845,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
+  accionesContainerLarge: {
+    gap: 12,
+  },
   botonAccion: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1930,16 +1856,18 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#E1E8ED',
   },
+  botonAccionLarge: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
   textoAccion: {
     marginLeft: 6,
     fontWeight: '600',
     fontSize: 13,
     color: '#34495E',
-    ...Platform.select({
-      small: {
-        fontSize: 12,
-      },
-    }),
+  },
+  textoAccionLarge: {
+    fontSize: 14,
   },
   textoEliminar: {
     color: '#E74C3C',
@@ -1960,14 +1888,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#2C3E50',
-    ...Platform.select({
-      web: {
-        fontSize: 17,
-      },
-      small: {
-        fontSize: 15,
-      },
-    }),
+  },
+  reservaNombrePistaLarge: {
+    fontSize: 17,
   },
   reservaTipo: {
     fontSize: 12,
@@ -1977,11 +1900,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 4,
     fontWeight: '600',
-    ...Platform.select({
-      small: {
-        fontSize: 11,
-      },
-    }),
+  },
+  reservaTipoLarge: {
+    fontSize: 13,
   },
   reservaInfo: {
     marginVertical: 8,
@@ -1991,12 +1912,9 @@ const styles = StyleSheet.create({
     color: '#7F8C8D',
     marginBottom: 4,
     lineHeight: 20,
-    ...Platform.select({
-      small: {
-        fontSize: 13,
-        lineHeight: 18,
-      },
-    }),
+  },
+  reservaTextoLarge: {
+    fontSize: 15,
   },
 
   // Estados
@@ -2026,18 +1944,10 @@ const styles = StyleSheet.create({
     padding: 20,
     width: '90%',
     maxWidth: 400,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-        elevation: 5,
-      }
-    }),
+  },
+  modalContentLarge: {
+    padding: 24,
+    maxWidth: 500,
   },
   modalTitle: {
     fontSize: 18,
@@ -2045,11 +1955,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: '#2C3E50',
     textAlign: 'center',
-    ...Platform.select({
-      web: {
-        fontSize: 20,
-      },
-    }),
+  },
+  modalTitleLarge: {
+    fontSize: 20,
   },
   modalPistaNombre: {
     fontSize: 16,
@@ -2074,6 +1982,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     backgroundColor: '#FDFEFE',
     color: '#2C3E50',
+  },
+  modalInputLarge: {
+    padding: 14,
+    fontSize: 16,
   },
   modalButtons: {
     flexDirection: 'row',
