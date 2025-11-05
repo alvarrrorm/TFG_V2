@@ -84,11 +84,20 @@ export default function ResumenReserva({ route, navigation }) {
     return reserva?.nombre_usuario || 'Desconocido';
   };
 
+
   useEffect(() => {
     console.log('Datos completos de reserva recibidos:', reserva);
     console.log('Precio de la reserva:', obtenerPrecio());
     console.log('Mensaje:', mensaje);
     console.log('Precio actualizado:', precioActualizado);
+    
+    // Debug info
+    console.log('🔍 DEBUG Reserva:', {
+      id: reserva?.id,
+      usuario_id: reserva?.usuario_id,
+      nombre_usuario: reserva?.nombre_usuario,
+      estado: reserva?.estado
+    });
     
     // Mostrar mensaje de éxito si existe
     if (mensaje && Platform.OS === 'web') {
@@ -181,6 +190,7 @@ export default function ResumenReserva({ route, navigation }) {
     }
   };
 
+  // 👇 FUNCIÓN MEJORADA PARA PROCESAR PAGO CON EMAIL
   const procesarPago = async () => {
     if (!reserva?.id) {
       Alert.alert('Error', 'No se encontró el ID de la reserva');
@@ -190,7 +200,9 @@ export default function ResumenReserva({ route, navigation }) {
     setLoading(true);
 
     try {
-      console.log('Confirmando reserva ID:', reserva.id);
+      console.log('✅ Confirmando reserva ID:', reserva.id);
+      console.log('📧 Usuario de la reserva:', reserva.nombre_usuario);
+      console.log('👤 ID de usuario:', reserva.usuario_id);
       
       const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/confirmar`, {
         method: 'PUT',
@@ -200,13 +212,22 @@ export default function ResumenReserva({ route, navigation }) {
         }
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+      const responseText = await response.text();
+      console.log('📨 Respuesta del servidor:', responseText);
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('❌ Error parseando JSON:', parseError);
+        throw new Error('Respuesta inválida del servidor');
       }
 
-      const data = await response.json();
-      console.log('Confirmación exitosa:', data);
+      if (!response.ok) {
+        throw new Error(data.error || `Error ${response.status}: ${response.statusText}`);
+      }
+
+      console.log('✅ Confirmación exitosa:', data);
 
       if (!data.success) {
         throw new Error(data.error || 'Error al confirmar la reserva');
@@ -219,27 +240,98 @@ export default function ResumenReserva({ route, navigation }) {
       };
 
       const precioFinal = obtenerPrecio();
-      const mensajeExito = `Reserva #${reserva.id} confirmada correctamente.\nTotal: ${precioFinal} €`;
+      
+      // 👇 MENSAJE MEJORADO CON MÁS INFORMACIÓN
+      let mensajeExito = `Reserva #${reserva.id} confirmada correctamente.\nTotal: ${precioFinal} €`;
+      
+      if (data.message) {
+        mensajeExito += `\n\n📋 ${data.message}`;
+      }
+      
+      if (data.warning) {
+        mensajeExito += `\n\n⚠️ ${data.warning}`;
+      } else if (!data.warning && data.message && data.message.includes('email')) {
+        mensajeExito += `\n\n📧 Se ha enviado un email de confirmación a tu correo.`;
+      } else if (!data.warning) {
+        mensajeExito += `\n\n📧 Se ha enviado un email de confirmación a tu correo.`;
+      }
 
       if (Platform.OS === 'web') {
         alert(mensajeExito);
         navigation.navigate('Reservas', { reserva: reservaActualizada });
       } else {
         Alert.alert(
-          'Reserva confirmada',
+          'Reserva confirmada ✅',
           mensajeExito,
           [{ text: 'OK', onPress: () => navigation.navigate('Reservas', { reserva: reservaActualizada }) }]
         );
       }
     } catch (error) {
-      console.error('Error en confirmación:', error);
-      Alert.alert(
-        'Error al confirmar', 
-        error.message || 'No se pudo confirmar la reserva. Por favor intente nuevamente.'
-      );
+      console.error('❌ Error en confirmación:', error);
+      
+      let mensajeError = error.message || 'No se pudo confirmar la reserva. Por favor intente nuevamente.';
+      
+      // Mensajes más específicos según el error
+      if (error.message.includes('usuario') || error.message.includes('email')) {
+        mensajeError += '\n\n💡 Asegúrate de que estés registrado correctamente en el sistema.';
+      }
+      
+      if (error.message.includes('pendiente')) {
+        mensajeError += '\n\n💡 La reserva ya estaba confirmada o no existe.';
+      }
+      
+      Alert.alert('Error al confirmar', mensajeError);
     } finally {
       setLoading(false);
       setModalVisible(false);
+    }
+  };
+
+  // 👇 NUEVA FUNCIÓN PARA REENVIAR EMAIL
+  const reenviarEmailConfirmacion = async () => {
+    if (!reserva?.id) {
+      Alert.alert('Error', 'No se encontró el ID de la reserva');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      console.log('Reenviando email para reserva ID:', reserva.id);
+      
+      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/reenviar-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Error ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('Reenvío exitoso:', data);
+
+      if (!data.success) {
+        throw new Error(data.error || 'Error al reenviar el email');
+      }
+
+      Alert.alert(
+        '✅ Email reenviado',
+        'Se ha enviado nuevamente el email de confirmación a tu correo.',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Error reenviando email:', error);
+      Alert.alert(
+        'Error al reenviar email', 
+        error.message || 'No se pudo reenviar el email. Por favor intente nuevamente.'
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -378,6 +470,8 @@ export default function ResumenReserva({ route, navigation }) {
             </TouchableOpacity>
           </View>
         )}
+
+    
       </View>
 
       {/* Sección de confirmación */}
@@ -390,7 +484,7 @@ export default function ResumenReserva({ route, navigation }) {
           <View style={styles.infoBox}>
             <Text style={styles.infoIcon}>💡</Text>
             <Text style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
-              Puedes confirmar tu reserva ahora o más tarde. Tu reserva seguirá activa como pendiente.
+              Al confirmar tu reserva, recibirás un email de confirmación con todos los detalles.
             </Text>
           </View>
           
@@ -453,7 +547,7 @@ export default function ResumenReserva({ route, navigation }) {
         </View>
       )}
 
-      {/* Información para reservas confirmadas */}
+      {/* 👇 SECCIÓN MEJORADA PARA RESERVAS CONFIRMADAS CON BOTÓN DE REENVÍO */}
       {estaConfirmada && (
         <View style={[styles.tarjeta, isLargeScreen && styles.tarjetaLarge]}>
           <Text style={[styles.tituloTarjeta, isSmallScreen && styles.tituloTarjetaSmall]}>
@@ -463,10 +557,25 @@ export default function ResumenReserva({ route, navigation }) {
           <View style={styles.infoBox}>
             <Text style={styles.infoIcon}>✅</Text>
             <Text style={[styles.infoText, isSmallScreen && styles.infoTextSmall]}>
-              Tu reserva ha sido confirmada y pagada. Presenta este número de reserva en el polideportivo: 
+              Tu reserva ha sido confirmada y pagada. Se ha enviado un email de confirmación a tu correo.
               <Text style={styles.numeroReserva}> #{reserva.id}</Text>
             </Text>
           </View>
+
+          {/* 👇 BOTÓN PARA REENVIAR EMAIL */}
+          <TouchableOpacity 
+            style={[styles.botonAccion, styles.botonEmail]}
+            onPress={reenviarEmailConfirmacion}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#667eea" />
+            ) : (
+              <Text style={[styles.botonAccionTexto, styles.botonEmailTexto]}>
+                📧 Reenviar Email de Confirmación
+              </Text>
+            )}
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -522,7 +631,8 @@ export default function ResumenReserva({ route, navigation }) {
                   styles.infoTextModal,
                   isSmallScreen && styles.infoTextModalSmall
                 ]}>
-                  Completa los datos de pago para confirmar tu reserva en {obtenerPolideportivo()}
+                  Completa los datos de pago para confirmar tu reserva en {obtenerPolideportivo()}.
+                  Recibirás un email de confirmación con todos los detalles.
                 </Text>
               </View>
               
@@ -663,7 +773,7 @@ export default function ResumenReserva({ route, navigation }) {
   );
 }
 
-// Los estilos se mantienen igual...
+// 👇 ESTILOS COMPLETOS ACTUALIZADOS
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -857,9 +967,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderColor: '#ef4444',
   },
+  // 👇 NUEVO ESTILO PARA BOTÓN DE EMAIL
+  botonEmail: {
+    backgroundColor: '#fff',
+    borderColor: '#667eea',
+    marginTop: 10,
+  },
   botonAccionTexto: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  // 👇 NUEVO ESTILO PARA TEXTO DE BOTÓN EMAIL
+  botonEmailTexto: {
+    color: '#667eea',
   },
   numeroReserva: {
     fontWeight: '700',
@@ -954,6 +1074,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     textAlign: 'center',
     fontWeight: '600',
+  },
+  // 👇 NUEVOS ESTILOS PARA DEBUG
+  debugContainer: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    borderTopStyle: 'dashed',
+  },
+  debugTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  botonDebug: {
+    backgroundColor: '#f3f4f6',
+    borderColor: '#9ca3af',
+    marginBottom: 8,
   },
   // Estilos para el modal (web) - se mantienen igual
   modalOverlay: {

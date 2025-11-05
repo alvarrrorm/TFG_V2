@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@emailjs/nodejs": "^5.0.2",
     "@react-native-community/datetimepicker": "^8.3.0",
     "@react-native-picker/picker": "2.9.0",
     "bcrypt": "^5.1.1",
@@ -23,6 +24,7 @@
     "jsonwebtoken": "^9.0.2",
     "mysql": "^2.18.1",
     "mysql2": "^3.14.3",
+    "nodemailer": "^7.0.10",
     "react-native-vector-icons": "^10.2.0"
   }
 }

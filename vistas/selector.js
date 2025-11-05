@@ -435,11 +435,7 @@ export default function Selector({ navigation }) {
               </View>
 
               {/* Footer Web */}
-              <View style={[styles.webFooter, { backgroundColor: colors.surfaceLight }]}>
-                <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-                  ¿Necesitas ayuda? Contacta con soporte@reservas.com
-                </Text>
-              </View>
+             
             </View>
           </ScrollView>
         </View>
