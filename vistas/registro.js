@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,52 +12,110 @@ import {
   Linking,
   Dimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 const screenHeight = Dimensions.get('window').height;
 
 export default function Register({ navigation }) {
-  const [nombre, setNombre] = useState('');
-  const [correo, setCorreo] = useState('');
-  const [usuario, setUsuario] = useState('');
-  const [dni, setDni] = useState('');
-  const [pass, setPass] = useState('');
-  const [pass_2, setPass2] = useState('');
-  const [claveAdmin, setClaveAdmin] = useState('');
+  const [formData, setFormData] = useState({
+    nombre: '',
+    correo: '',
+    usuario: '',
+    dni: '',
+    telefono: '',
+    pass: '',
+    pass_2: '',
+    claveAdmin: ''
+  });
   const [mensajeError, setMensajeError] = useState('');
   const [aceptoPoliticas, setAceptoPoliticas] = useState(false);
-  const [telefono, setTelefono] = useState('');
+  const [cargando, setCargando] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+
+  // Referencias para navegación entre inputs
+  const correoRef = useRef();
+  const usuarioRef = useRef();
+  const dniRef = useRef();
+  const telefonoRef = useRef();
+  const passRef = useRef();
+  const pass2Ref = useRef();
+  const claveAdminRef = useRef();
+
+  // Función para navegar al siguiente campo
+  const focusNextField = (nextRef) => {
+    if (nextRef && nextRef.current) {
+      nextRef.current.focus();
+    }
+  };
+
+  // Handler único para todos los campos
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  // Handler especial para teléfono
+  const handleTelefonoChange = (value) => {
+    const soloNumeros = value.replace(/[^0-9]/g, '');
+    setFormData(prev => ({
+      ...prev,
+      telefono: soloNumeros
+    }));
+  };
 
   // Manejar el registro del usuario
   const handleRegister = async () => {
     Keyboard.dismiss();
+    setCargando(true);
+    setMensajeError('');
 
+    const { nombre, correo, usuario, dni, pass, pass_2, telefono, claveAdmin } = formData;
     const correoValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+    // Validaciones (solo al enviar)
     if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
       setMensajeError('Por favor, completa todos los campos');
+      setCargando(false);
       return;
     }
 
     if (!correoValido.test(correo)) {
       setMensajeError('Correo electrónico no válido');
+      setCargando(false);
       return;
     }
 
     if (pass !== pass_2) {
       setMensajeError('Las contraseñas no coinciden');
+      setCargando(false);
       return;
     }
 
     if (!aceptoPoliticas) {
       setMensajeError('Debes aceptar las políticas de privacidad');
+      setCargando(false);
       return;
     }
 
     try {
       const response = await fetch('http://localhost:3001/registro', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre, correo, usuario, dni, pass, pass_2, telefono, clave_admin: claveAdmin })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          nombre, 
+          correo, 
+          usuario, 
+          dni, 
+          pass, 
+          pass_2, 
+          telefono, 
+          clave_admin: claveAdmin 
+        })
       });
 
       const data = await response.json();
@@ -65,13 +123,30 @@ export default function Register({ navigation }) {
       if (response.ok) {
         setMensajeError('');
         Alert.alert('Éxito', 'Usuario registrado con éxito');
+        
+        // Limpiar formulario
+        setFormData({
+          nombre: '',
+          correo: '',
+          usuario: '',
+          dni: '',
+          telefono: '',
+          pass: '',
+          pass_2: '',
+          claveAdmin: ''
+        });
+        setAceptoPoliticas(false);
+        
+        // Navegar al login
         navigation.navigate('Login');
       } else {
-        setMensajeError(data.error || 'No se pudo registrar el usuario');
+        setMensajeError(data.error || 'Error al registrar el usuario');
       }
     } catch (error) {
-      console.error(error);
+      console.error('Error de conexión:', error);
       setMensajeError('No se pudo conectar con el servidor');
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -80,125 +155,273 @@ export default function Register({ navigation }) {
     Linking.openURL('https://drive.google.com/file/d/1wJ_KyccZQE6VPjGLy8ThGCvXFj2OrhoC/view?usp=sharing');
   };
 
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
+
+  // Colores para modo oscuro
+  const colors = darkMode ? {
+    background: '#0F172A',
+    surface: '#1E293B',
+    primary: '#6366F1',
+    text: '#F1F5F9',
+    textSecondary: '#CBD5E1',
+    textMuted: '#94A3B8',
+    border: '#334155',
+    danger: '#EF4444',
+    card: '#1E293B',
+    inputBackground: '#334155',
+  } : {
+    background: '#F8FAFC',
+    surface: '#FFFFFF',
+    primary: '#4F46E5',
+    text: '#1F2937',
+    textSecondary: '#6B7280',
+    textMuted: '#9CA3AF',
+    border: '#E5E7EB',
+    danger: '#EF4444',
+    card: '#FFFFFF',
+    inputBackground: '#F9FAFB',
+  };
+
   return (
-    <View style={styles.overlay}>
+    <View style={[styles.overlay, { backgroundColor: colors.background }]}>
       <FlatList
         data={[]}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(item, index) => index.toString()}
         ListHeaderComponent={
           <View style={styles.container}>
-            <View style={styles.formContainer}>
-              <Text style={styles.title}>Crear cuenta</Text>
-              <Text style={styles.subtitle}>Únete a nuestra comunidad deportiva</Text>
+            <View style={[styles.formContainer, { backgroundColor: colors.card }]}>
+              
+              {/* Header */}
+              <View style={styles.header}>
+                <TouchableOpacity 
+                  style={styles.backButton}
+                  onPress={() => navigation.goBack()}
+                >
+                  <Ionicons name="arrow-back" size={24} color={colors.primary} />
+                </TouchableOpacity>
+                <View style={styles.headerCenter}>
+                  <Text style={[styles.title, { color: colors.text }]}>Crear cuenta</Text>
+                </View>
+                <TouchableOpacity 
+                  style={styles.darkModeToggle}
+                  onPress={toggleDarkMode}
+                >
+                  <Ionicons 
+                    name={darkMode ? "sunny" : "moon"} 
+                    size={22} 
+                    color={colors.primary} 
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+                Únete a nuestra comunidad deportiva
+              </Text>
 
               {mensajeError ? (
-                <View style={styles.errorContainer}>
-                  <Text style={styles.errorText}>{mensajeError}</Text>
+                <View style={[styles.errorContainer, { backgroundColor: colors.danger + '15' }]}>
+                  <Ionicons name="warning-outline" size={20} color={colors.danger} />
+                  <Text style={[styles.errorText, { color: colors.danger }]}>
+                    {mensajeError}
+                  </Text>
                 </View>
               ) : null}
 
               <TextInput
                 placeholder="Nombre completo"
-                placeholderTextColor="#9CA3AF"
-                style={styles.input}
-                value={nombre}
-                onChangeText={(text) => { setNombre(text); setMensajeError(''); }}
-                returnKeyType="next"
-              />
-              <TextInput
-                placeholder="Correo electrónico"
-                placeholderTextColor="#9CA3AF"
-                style={styles.input}
-                value={correo}
-                onChangeText={(text) => {
-                  setCorreo(text);
-                  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                  if (text === '' || regex.test(text)) {
-                    setMensajeError('');
-                  } else {
-                    setMensajeError('Correo electrónico no válido');
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
                   }
-                }}
+                ]}
+                value={formData.nombre}
+                onChangeText={(text) => handleInputChange('nombre', text)}
+                returnKeyType="next"
+                onSubmitEditing={() => focusNextField(correoRef)}
+                autoComplete="name"
+                textContentType="name"
+                editable={!cargando}
+              />
+              
+              <TextInput
+                ref={correoRef}
+                placeholder="Correo electrónico"
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.correo}
+                onChangeText={(text) => handleInputChange('correo', text)}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(usuarioRef)}
+                autoComplete="email"
+                textContentType="emailAddress"
+                editable={!cargando}
               />
 
               <TextInput
+                ref={usuarioRef}
                 placeholder="Nombre de usuario"
-                placeholderTextColor="#9CA3AF"
-                style={styles.input}
-                value={usuario}
-                onChangeText={(text) => { setUsuario(text); setMensajeError(''); }}
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.usuario}
+                onChangeText={(text) => handleInputChange('usuario', text)}
                 autoCapitalize="none"
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(dniRef)}
+                autoComplete="username"
+                textContentType="username"
+                editable={!cargando}
               />
+              
               <TextInput
+                ref={dniRef}
                 placeholder="DNI (Con Letra)"
-                placeholderTextColor="#9CA3AF"
-                style={styles.input}
-                value={dni}
-                onChangeText={(text) => { setDni(text); setMensajeError(''); }}
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.dni}
+                onChangeText={(text) => handleInputChange('dni', text)}
+                autoCapitalize="characters"
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(telefonoRef)}
+                autoComplete="off"
+                editable={!cargando}
               />
+              
               <TextInput
+                ref={telefonoRef}
                 placeholder="Número de Teléfono"
-                placeholderTextColor="#9CA3AF"
-                style={styles.input}
-                value={telefono}
-                onChangeText={(text) => {
-                  // Solo guarda números
-                  const soloNumeros = text.replace(/[^0-9]/g, '');
-                  setTelefono(soloNumeros);
-                  setMensajeError('');
-                }}
-                keyboardType="numeric"
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.telefono}
+                onChangeText={handleTelefonoChange}
+                keyboardType="phone-pad"
                 maxLength={15}
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(passRef)}
+                autoComplete="tel"
+                textContentType="telephoneNumber"
+                editable={!cargando}
               />
 
-
               <TextInput
+                ref={passRef}
                 placeholder="Contraseña"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
                 secureTextEntry
-                style={styles.input}
-                value={pass}
-                onChangeText={(text) => { setPass(text); setMensajeError(''); }}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.pass}
+                onChangeText={(text) => handleInputChange('pass', text)}
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(pass2Ref)}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                editable={!cargando}
               />
+              
               <TextInput
+                ref={pass2Ref}
                 placeholder="Repetir contraseña"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
                 secureTextEntry
-                style={styles.input}
-                value={pass_2}
-                onChangeText={(text) => { setPass2(text); setMensajeError(''); }}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.pass_2}
+                onChangeText={(text) => handleInputChange('pass_2', text)}
                 returnKeyType="next"
+                onSubmitEditing={() => focusNextField(claveAdminRef)}
+                autoComplete="new-password"
+                textContentType="newPassword"
+                editable={!cargando}
               />
+              
               <TextInput
+                ref={claveAdminRef}
                 placeholder="Clave de administrador (opcional)"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
                 secureTextEntry
-                style={styles.input}
-                value={claveAdmin}
-                onChangeText={(text) => { setClaveAdmin(text); setMensajeError(''); }}
+                style={[
+                  styles.input,
+                  { 
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    color: colors.text
+                  }
+                ]}
+                value={formData.claveAdmin}
+                onChangeText={(text) => handleInputChange('claveAdmin', text)}
                 returnKeyType="done"
                 onSubmitEditing={Keyboard.dismiss}
+                autoComplete="off"
+                editable={!cargando}
               />
 
               <View style={styles.checkboxContainer}>
                 <TouchableOpacity
                   style={styles.checkbox}
-                  onPress={() => setAceptoPoliticas(!aceptoPoliticas)}
+                  onPress={() => !cargando && setAceptoPoliticas(!aceptoPoliticas)}
+                  disabled={cargando}
                 >
-                  <View style={[styles.checkboxIcon, aceptoPoliticas && styles.checkboxChecked]}>
-                    {aceptoPoliticas && <Text style={styles.checkboxCheckmark}>✓</Text>}
+                  <View style={[
+                    styles.checkboxIcon, 
+                    { borderColor: colors.border },
+                    aceptoPoliticas && [styles.checkboxChecked, { backgroundColor: colors.primary }]
+                  ]}>
+                    {aceptoPoliticas && (
+                      <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                    )}
                   </View>
-                  <Text style={styles.checkboxText}>
+                  <Text style={[styles.checkboxText, { color: colors.text }]}>
                     Acepto las{' '}
-                    <Text style={styles.politicasLink} onPress={navigateToPoliticas}>
+                    <Text style={[styles.politicasLink, { color: colors.primary }]} onPress={navigateToPoliticas}>
                       políticas de privacidad
                     </Text>
                   </Text>
@@ -206,24 +429,43 @@ export default function Register({ navigation }) {
               </View>
 
               <TouchableOpacity
-                style={styles.button}
+                style={[
+                  styles.button,
+                  { backgroundColor: colors.primary },
+                  cargando && styles.buttonDisabled
+                ]}
                 onPress={handleRegister}
                 activeOpacity={0.8}
+                disabled={cargando}
               >
-                <Text style={styles.buttonText}>Registrarse</Text>
+                {cargando ? (
+                  <View style={styles.loadingContainer}>
+                    <Ionicons name="reload" size={20} color="#FFFFFF" />
+                    <Text style={styles.buttonText}>Registrando...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="person-add" size={20} color="#FFFFFF" />
+                    <Text style={styles.buttonText}>Crear Cuenta</Text>
+                  </>
+                )}
               </TouchableOpacity>
 
               <View style={styles.divider}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>o</Text>
-                <View style={styles.dividerLine} />
+                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                <Text style={[styles.dividerText, { color: colors.textMuted }]}>o</Text>
+                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
               </View>
 
               <TouchableOpacity
-                style={styles.secondaryButton}
+                style={[styles.secondaryButton, { borderColor: colors.primary }]}
                 onPress={() => navigation.navigate('Login')}
+                disabled={cargando}
               >
-                <Text style={styles.secondaryButtonText}>¿Ya tienes cuenta? Inicia sesión</Text>
+                <Text style={[styles.secondaryButtonText, { color: colors.text }]}>
+                  ¿Ya tienes cuenta?{' '}
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Inicia sesión</Text>
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -238,7 +480,6 @@ export default function Register({ navigation }) {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     padding: 10,
     justifyContent: 'center',
   },
@@ -249,7 +490,6 @@ const styles = StyleSheet.create({
   formContainer: {
     width: '100%',
     maxWidth: Platform.OS === 'web' ? 600 : '100%',
-    backgroundColor: '#fff',
     borderRadius: 20,
     paddingVertical: 20,
     paddingHorizontal: Platform.OS === 'web' ? 40 : 20,
@@ -259,16 +499,30 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  backButton: {
+    padding: 8,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  darkModeToggle: {
+    padding: 8,
+  },
   title: {
     fontSize: Platform.OS === 'web' ? 32 : 26,
     fontWeight: '800',
-    color: '#1F2937',
     marginBottom: 5,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
     fontWeight: '500',
     marginBottom: 25,
     textAlign: 'center',
@@ -277,38 +531,52 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 50,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
     borderRadius: 12,
     paddingHorizontal: 16,
     marginBottom: 15,
     fontSize: 16,
-    backgroundColor: 'rgba(249, 250, 251, 0.8)',
-    color: '#1F2937',
   },
   button: {
-    backgroundColor: '#4F46E5',
     paddingVertical: 16,
     borderRadius: 12,
     width: '100%',
     alignItems: 'center',
     marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   buttonText: {
     color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '700',
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   errorContainer: {
-    backgroundColor: '#FEE2E2',
     padding: 12,
     borderRadius: 10,
     marginBottom: 20,
     width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   errorText: {
-    color: '#DC2626',
     fontSize: 15,
     textAlign: 'center',
+    flex: 1,
   },
   checkboxContainer: {
     width: '100%',
@@ -316,34 +584,27 @@ const styles = StyleSheet.create({
   },
   checkbox: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   checkboxIcon: {
     width: 22,
     height: 22,
     borderWidth: 2,
-    borderColor: '#D1D5DB',
     borderRadius: 5,
     marginRight: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    marginTop: 2,
   },
   checkboxChecked: {
-    backgroundColor: '#4F46E5',
-    borderColor: '#4F46E5',
-  },
-  checkboxCheckmark: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: 'bold',
+    borderWidth: 0,
   },
   checkboxText: {
     fontSize: 15,
-    color: '#4B5563',
+    flex: 1,
+    lineHeight: 20,
   },
   politicasLink: {
-    color: '#4F46E5',
     fontWeight: '600',
     textDecorationLine: 'underline',
   },
@@ -355,24 +616,20 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E5E7EB',
   },
   dividerText: {
-    color: '#6B7280',
     paddingHorizontal: 10,
     fontSize: 14,
     fontWeight: '500',
   },
   secondaryButton: {
     borderWidth: 2,
-    borderColor: '#4F46E5',
     paddingVertical: 14,
     borderRadius: 12,
     width: '100%',
     alignItems: 'center',
   },
   secondaryButtonText: {
-    color: '#4F46E5',
     fontSize: 16,
     fontWeight: '700',
   },
