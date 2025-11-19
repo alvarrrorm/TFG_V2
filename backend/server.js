@@ -138,19 +138,25 @@ const registroRuta = require('./rutas/registro');
 const pistasRuta = require('./rutas/pistas');
 const reservasRuta = require('./rutas/reservas');
 const polideportivosRuta = require('./rutas/polideportivos');
+const recuperaRuta = require('./rutas/recupera'); // 👈 NUEVA RUTA
 
 app.use('/login', loginRuta);
 app.use('/registro', registroRuta);
 app.use('/pistas', pistasRuta);
 app.use('/reservas', reservasRuta);
 app.use('/polideportivos', polideportivosRuta);
+app.use('/recupera', recuperaRuta); // 👈 NUEVA RUTA
 
 // Ruta de prueba para verificar que el servidor está activo
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API del Polideportivo funcionando',
     emailService: 'EmailJS',
-    status: 'online'
+    status: 'online',
+    rutas: {
+      reservas: '/reservas',
+      recuperacion: '/recupera'
+    }
   });
 });
 
@@ -388,6 +394,7 @@ app.listen(PORT, () => {
   console.log(`🌐 URL: http://localhost:${PORT}`);
   console.log(`📧 Test Email: http://localhost:${PORT}/test-email`);
   console.log(`📧 Test Email Real: http://localhost:${PORT}/test-email-real`);
+  console.log(`🔐 Recuperación: http://localhost:${PORT}/recupera`);
   console.log(`👤 Debug Usuarios: http://localhost:${PORT}/debug/usuarios`);
   console.log(`📋 Debug Reservas: http://localhost:${PORT}/debug/reservas`);
   console.log(`🔧 Fix Emails: http://localhost:${PORT}/debug/fix-emails`);

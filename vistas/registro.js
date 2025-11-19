@@ -218,7 +218,7 @@ export default function Register({ navigation }) {
               </View>
 
               <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                Únete a nuestra comunidad deportiva
+                Únete a Depo
               </Text>
 
               {mensajeError ? (

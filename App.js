@@ -10,6 +10,7 @@ import CrearReserva from './vistas/NuevaReserva';
 import AdminPanel from './vistas/admin';
 import ResumenReserva from './vistas/ResumenReserva';
 import FormularioReserva from './componentes/FormularioReserva';
+import RecuperarPassword from './vistas/recuperacion';
 
 import MisReservas from './vistas/MisReservas';
 
@@ -42,10 +43,16 @@ export default function App() {
           <Stack.Screen 
             name="Login" 
             component={Login} 
+            options={{
+              headerShown: false,         
+            }}
           />
           <Stack.Screen 
             name="Registro" 
             component={Registro} 
+            options={{
+              headerShown: false,         
+            }}
           />
           <Stack.Screen 
             name="Reservas" 
@@ -66,6 +73,9 @@ export default function App() {
           <Stack.Screen
             name="AdminPanel"
             component={AdminPanel}
+            options={{
+              headerShown: false,         
+            }}
           />
           <Stack.Screen
             name="ResumenReserva"
@@ -81,6 +91,13 @@ export default function App() {
             options={{
               headerShown: true,         
               title: 'Mis Reservas', 
+            }}
+          />
+          <Stack.Screen
+            name="RecuperarPassword"
+            component={RecuperarPassword}
+            options={{
+              headerShown: false,         
             }}
           />
          
