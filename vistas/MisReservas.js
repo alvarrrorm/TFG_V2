@@ -139,7 +139,7 @@ const MisReservas = () => {
         return;
       }
 
-      const response = await fetch(`http://localhost:3001/reservas?nombre_usuario=${encodeURIComponent(nombreUsuario)}`);
+      const response = await fetch(`https://tfgv2-production.up.railway.app/reservas?nombre_usuario=${encodeURIComponent(nombreUsuario)}`);
       if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
 
       const result = await response.json();
@@ -209,7 +209,7 @@ const MisReservas = () => {
         }
       }
 
-      const response = await fetch(`http://localhost:3001/reservas/${idReserva}`, {
+      const response = await fetch(`hhttps://tfgv2-production.up.railway.app/reservas/${idReserva}`, {
         method: 'DELETE'
       });
 

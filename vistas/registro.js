@@ -100,7 +100,7 @@ export default function Register({ navigation }) {
     }
 
     try {
-      const response = await fetch('http://localhost:3001/registro', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/registro', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

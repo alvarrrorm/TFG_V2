@@ -20,9 +20,9 @@ import { useUser } from '../contexto/UserContex';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import DropDownPicker from 'react-native-dropdown-picker';
 
-const API_URL = 'http://localhost:3001/pistas';
-const RESERVAS_URL = 'http://localhost:3001/reservas';
-const POLIDEPORTIVOS_URL = 'http://localhost:3001/polideportivos';
+const API_URL = 'https://tfgv2-production.up.railway.app/pistas';
+const RESERVAS_URL = 'https://tfgv2-production.up.railway.app/reservas';
+const POLIDEPORTIVOS_URL = 'https://tfgv2-production.up.railway.app/polideportivos';
 
 export default function AdminPanel({ navigation }) {
   const { usuario } = useUser();

@@ -142,7 +142,7 @@ export default function ResumenReserva({ route, navigation }) {
             try {
               console.log('Cancelando reserva ID:', reserva.id);
               
-              const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/cancelar`, {
+              const response = await fetch(`https://tfgv2-production.up.railway.app/reservas/${reserva.id}/cancelar`, {
                 method: 'PUT',
                 headers: {
                   'Content-Type': 'application/json',
@@ -204,7 +204,7 @@ export default function ResumenReserva({ route, navigation }) {
       console.log('📧 Usuario de la reserva:', reserva.nombre_usuario);
       console.log('👤 ID de usuario:', reserva.usuario_id);
       
-      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/confirmar`, {
+      const response = await fetch(`https://tfgv2-production.up.railway.app/reservas/${reserva.id}/confirmar`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -299,7 +299,7 @@ export default function ResumenReserva({ route, navigation }) {
     try {
       console.log('Reenviando email para reserva ID:', reserva.id);
       
-      const response = await fetch(`http://localhost:3001/reservas/${reserva.id}/reenviar-email`, {
+      const response = await fetch(`https://tfgv2-production.up.railway.app/reservas/${reserva.id}/reenviar-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
