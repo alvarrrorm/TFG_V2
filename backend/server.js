@@ -30,8 +30,8 @@ const emailjsConfig = {
   privateKey: process.env.EMAILJS_PRIVATE_KEY || 'Td3FXR8CwPdKsuyIuwPF_',
 };
 
-const emailjsServiceId = 'service_lb9lbhi';
-const emailjsTemplateId = 'template_hfuxqzm';
+const emailjsServiceId = process.env.EMAILJS_SERVICE_ID || 'service_lb9lbhi';
+const emailjsTemplateId = process.env.EMAILJS_TEMPLATE_ID || 'template_hfuxqzm';
 
 // Configuración JWT
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
@@ -45,7 +45,7 @@ function validarEmail(email) {
   return emailRegex.test(email);
 }
 
-// 👇 FUNCIÓN MEJORADA PARA OBTENER EMAIL DEL USUARIO (AHORA CON SUPABASE)
+// 👇 FUNCIÓN MEJORADA PARA OBTENER EMAIL DEL USUARIO
 async function obtenerEmailUsuario(usuarioId) {
   try {
     const { data: usuario, error } = await supabase
@@ -130,8 +130,10 @@ function enviarEmailConfirmacion(reserva) {
 const app = express();
 
 // ========== CONFIGURACIÓN CORS MEJORADA ==========
+// Configuración CORS más permisiva para desarrollo
 const corsOptions = {
   origin: function (origin, callback) {
+    // En producción, permitir solo dominios específicos
     const allowedOrigins = [
       'http://localhost:3000', 
       'http://localhost:8081', 
@@ -146,6 +148,11 @@ const corsOptions = {
     // Permitir requests sin origin (como mobile apps o postman)
     if (!origin) return callback(null, true);
     
+    // En desarrollo, permitir todos los orígenes
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
     if (allowedOrigins.some(allowedOrigin => {
       if (typeof allowedOrigin === 'string') {
         return allowedOrigin === origin;
@@ -156,6 +163,7 @@ const corsOptions = {
     })) {
       callback(null, true);
     } else {
+      console.log('🚫 CORS bloqueado para origen:', origin);
       callback(new Error('No permitido por CORS'));
     }
   },
@@ -186,7 +194,7 @@ app.set('bcrypt', bcrypt);
 // ========== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND ==========
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// ========== RUTA DE LOGIN SIMPLIFICADA (PARA PRUEBAS) ==========
+// ========== RUTA DE LOGIN MEJORADA ==========
 app.post('/api/login', async (req, res) => {
   try {
     const { usuario, password } = req.body;
@@ -215,15 +223,12 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // Verificar contraseña (asumiendo que está hasheada)
-    // Si las contraseñas están en texto plano, compara directamente
+    // Verificar contraseña
     let passwordValid = false;
     
     if (user.password_hash) {
-      // Si tienes contraseñas hasheadas
       passwordValid = await bcrypt.compare(password, user.password_hash);
     } else if (user.password) {
-      // Si tienes contraseñas en texto plano (no recomendado)
       passwordValid = user.password === password;
     } else {
       console.log('❌ No se encontró campo de contraseña para el usuario');
@@ -247,7 +252,8 @@ app.post('/api/login', async (req, res) => {
         id: user.id, 
         usuario: user.usuario,
         nombre: user.nombre,
-        email: user.correo
+        email: user.correo,
+        rol: user.rol || 'user'
       },
       JWT_SECRET,
       { expiresIn: '24h' }
@@ -263,7 +269,8 @@ app.post('/api/login', async (req, res) => {
         id: user.id,
         usuario: user.usuario,
         nombre: user.nombre,
-        email: user.correo
+        email: user.correo,
+        rol: user.rol || 'user'
       }
     });
 
@@ -271,10 +278,369 @@ app.post('/api/login', async (req, res) => {
     console.error('❌ Error en login:', error);
     res.status(500).json({
       success: false,
-      error: 'Error interno del servidor: ' + error.message
+      error: 'Error interno del servidor'
     });
   }
 });
+
+// ========== RUTA DE REGISTRO ==========
+app.post('/api/registro', async (req, res) => {
+  try {
+    const { usuario, password, nombre, correo, dni } = req.body;
+    
+    console.log('📝 Intento de registro para usuario:', usuario);
+    
+    // Validaciones
+    if (!usuario || !password || !nombre || !correo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Todos los campos son requeridos'
+      });
+    }
+
+    if (!validarEmail(correo)) {
+      return res.status(400).json({
+        success: false,
+        error: 'El formato del email no es válido'
+      });
+    }
+
+    // Verificar si el usuario ya existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('usuarios')
+      .select('usuario, correo')
+      .or(`usuario.eq.${usuario},correo.eq.${correo}`)
+      .single();
+
+    if (existingUser) {
+      if (existingUser.usuario === usuario) {
+        return res.status(400).json({
+          success: false,
+          error: 'El nombre de usuario ya está en uso'
+        });
+      }
+      if (existingUser.correo === correo) {
+        return res.status(400).json({
+          success: false,
+          error: 'El email ya está registrado'
+        });
+      }
+    }
+
+    // Hash de la contraseña
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Crear usuario en Supabase
+    const { data: newUser, error: createError } = await supabase
+      .from('usuarios')
+      .insert([
+        {
+          usuario,
+          password_hash: hashedPassword,
+          nombre,
+          correo,
+          dni: dni || null,
+          rol: 'user',
+          fecha_creacion: new Date()
+        }
+      ])
+      .select()
+      .single();
+
+    if (createError) {
+      throw createError;
+    }
+
+    console.log('✅ Usuario registrado exitosamente:', usuario);
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { 
+        id: newUser.id, 
+        usuario: newUser.usuario,
+        nombre: newUser.nombre,
+        email: newUser.correo,
+        rol: newUser.rol
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Usuario registrado exitosamente',
+      token: token,
+      user: {
+        id: newUser.id,
+        usuario: newUser.usuario,
+        nombre: newUser.nombre,
+        email: newUser.correo,
+        rol: newUser.rol
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en registro:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
+    });
+  }
+});
+
+// ========== RUTA DE RECUPERACIÓN DE CONTRASEÑA ==========
+app.post('/api/recupera', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    console.log('🔑 Solicitud de recuperación para:', email);
+    
+    if (!email || !validarEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email válido requerido'
+      });
+    }
+
+    // Buscar usuario por email
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('id, usuario, nombre, correo')
+      .eq('correo', email)
+      .single();
+
+    if (error || !user) {
+      // Por seguridad, no revelar si el email existe o no
+      console.log('📧 Email no encontrado (o error):', email);
+      return res.json({
+        success: true,
+        message: 'Si el email existe, recibirás instrucciones para recuperar tu contraseña'
+      });
+    }
+
+    // Aquí implementarías el envío de email de recuperación
+    console.log('📧 Enviando email de recuperación a:', user.correo);
+    
+    // Por ahora solo logueamos
+    res.json({
+      success: true,
+      message: 'Si el email existe, recibirás instrucciones para recuperar tu contraseña'
+    });
+
+  } catch (error) {
+    console.error('❌ Error en recuperación:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
+    });
+  }
+});
+
+// ========== RUTAS DE PISTAS ==========
+app.get('/api/pistas', async (req, res) => {
+  try {
+    const { polideportivo_id } = req.query;
+    
+    let query = supabase.from('pistas').select('*');
+    
+    if (polideportivo_id) {
+      query = query.eq('polideportivo_id', polideportivo_id);
+    }
+
+    const { data: pistas, error } = await query;
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      pistas: pistas || []
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo pistas:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo pistas'
+    });
+  }
+});
+
+// ========== RUTAS DE POLIDEPORTIVOS ==========
+app.get('/api/polideportivos', async (req, res) => {
+  try {
+    const { data: polideportivos, error } = await supabase
+      .from('polideportivos')
+      .select('*')
+      .order('nombre');
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      polideportivos: polideportivos || []
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo polideportivos:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo polideportivos'
+    });
+  }
+});
+
+// ========== RUTAS DE RESERVAS ==========
+app.get('/api/reservas', async (req, res) => {
+  try {
+    const { usuario_id, fecha } = req.query;
+    
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas (*),
+        polideportivos (*)
+      `);
+
+    if (usuario_id) {
+      query = query.eq('usuario_id', usuario_id);
+    }
+
+    if (fecha) {
+      query = query.eq('fecha', fecha);
+    }
+
+    const { data: reservas, error } = await query.order('fecha', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      reservas: reservas || []
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo reservas:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo reservas'
+    });
+  }
+});
+
+app.post('/api/reservas', async (req, res) => {
+  try {
+    const { usuario_id, pista_id, fecha, hora_inicio, hora_fin, precio } = req.body;
+    
+    console.log('📅 Creando reserva para usuario:', usuario_id);
+
+    // Verificar disponibilidad
+    const { data: existingReservas, error: checkError } = await supabase
+      .from('reservas')
+      .select('id')
+      .eq('pista_id', pista_id)
+      .eq('fecha', fecha)
+      .eq('hora_inicio', hora_inicio)
+      .eq('estado', 'confirmada');
+
+    if (checkError) throw checkError;
+
+    if (existingReservas && existingReservas.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'La pista no está disponible en ese horario'
+      });
+    }
+
+    // Obtener información del usuario para el email
+    const { data: usuario, error: userError } = await supabase
+      .from('usuarios')
+      .select('nombre, correo')
+      .eq('id', usuario_id)
+      .single();
+
+    if (userError) throw userError;
+
+    // Obtener información de la pista y polideportivo
+    const { data: pistaInfo, error: pistaError } = await supabase
+      .from('pistas')
+      .select('nombre, polideportivos(nombre)')
+      .eq('id', pista_id)
+      .single();
+
+    if (pistaError) throw pistaError;
+
+    // Crear reserva
+    const { data: nuevaReserva, error: createError } = await supabase
+      .from('reservas')
+      .insert([
+        {
+          usuario_id,
+          pista_id,
+          fecha,
+          hora_inicio,
+          hora_fin,
+          precio,
+          estado: 'confirmada',
+          nombre_usuario: usuario.nombre,
+          polideportivo_nombre: pistaInfo.polideportivos.nombre,
+          pista_nombre: pistaInfo.nombre
+        }
+      ])
+      .select()
+      .single();
+
+    if (createError) throw createError;
+
+    console.log('✅ Reserva creada exitosamente:', nuevaReserva.id);
+
+    // Enviar email de confirmación
+    try {
+      const reservaConEmail = {
+        ...nuevaReserva,
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre
+      };
+      
+      await enviarEmailConfirmacion(reservaConEmail);
+      console.log('📧 Email de confirmación enviado');
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      // No fallar la reserva por error de email
+    }
+
+    res.json({
+      success: true,
+      message: 'Reserva creada exitosamente',
+      reserva: nuevaReserva
+    });
+
+  } catch (error) {
+    console.error('❌ Error creando reserva:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error creando reserva'
+    });
+  }
+});
+
+// ========== MIDDLEWARE DE AUTENTICACIÓN ==========
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token de acceso requerido' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Token inválido o expirado' });
+    }
+    req.user = user;
+    next();
+  });
+};
 
 // ========== RUTAS BÁSICAS DEL API ==========
 app.get('/api', (req, res) => {
@@ -431,24 +797,6 @@ app.get('/api/test-supabase', async (req, res) => {
     });
   }
 });
-
-// ========== MIDDLEWARE DE AUTENTICACIÓN ==========
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) {
-    return res.status(401).json({ error: 'Token de acceso requerido' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Token inválido o expirado' });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 // Ruta protegida de ejemplo
 app.get('/api/protected', authenticateToken, (req, res) => {
