@@ -136,7 +136,8 @@ app.use(cors({
     'https://www.deppo.es',
     'https://*.railway.app',
     'https://*.vercel.app',
-    'https://gestion-pink.vercel.app'  // 👈 AÑADIDO ESPECÍFICAMENTE
+    'https://gestion-pink.vercel.app',
+    'https://gestion-polideportivos-web.vercel.app'  // 👈 AÑADIDO ESPECÍFICAMENTE
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'], // 👈 AÑADIDO X-Requested-With
