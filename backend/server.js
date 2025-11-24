@@ -5,8 +5,8 @@ const { createClient } = require('@supabase/supabase-js');
 const emailjs = require('@emailjs/nodejs');
 
 // ========== CONFIGURACIÓN SUPABASE ==========
-const supabaseUrl = 'https://oiejhhkggnmqrubypvrt.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
+const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -23,14 +23,19 @@ async function verificarConexionSupabase() {
 
 // ========== CONFIGURACIÓN EMAILJS ==========
 const emailjsConfig = {
-  publicKey: 'cm8peTJ9deE4bwUrS',
-  privateKey: 'Td3FXR8CwPdKsuyIuwPF_',
+  publicKey: process.env.EMAILJS_PUBLIC_KEY || 'cm8peTJ9deE4bwUrS',
+  privateKey: process.env.EMAILJS_PRIVATE_KEY || 'Td3FXR8CwPdKsuyIuwPF_',
 };
 
 const emailjsServiceId = 'service_lb9lbhi';
 const emailjsTemplateId = 'template_hfuxqzm';
 
+// Configuración JWT
+const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
+
 console.log('📧 Configurando EmailJS...');
+console.log('🔐 JWT Secret:', JWT_SECRET ? '✅ Configurado' : '❌ Usando valor por defecto');
+console.log('🗄️  Supabase URL:', supabaseUrl ? '✅ Configurado' : '❌ Usando valor por defecto');
 
 // 👇 FUNCIÓN MEJORADA PARA VALIDAR EMAIL
 function validarEmail(email) {
@@ -120,17 +125,25 @@ function enviarEmailConfirmacion(reserva) {
   });
 }
 
+// Crear instancia de Express
+const app = express();
+
 // Guardar las funciones en app para usarlas en las rutas
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('validarEmail', validarEmail);
-app.set('supabase', supabase); // 👈 Cambiado de 'conexion' a 'supabase'
-
-// Crear instancia de Express
-const app = express();
+app.set('supabase', supabase);
+app.set('jwt_secret', JWT_SECRET); // 👈 Añadir JWT secret para las rutas
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:8081', 'https://deppo.es', 'https://www.deppo.es'],
+  origin: [
+    'http://localhost:3000', 
+    'http://localhost:8081', 
+    'https://deppo.es', 
+    'https://www.deppo.es',
+    'https://*.railway.app',
+    'https://*.vercel.app'
+  ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -161,11 +174,30 @@ app.get('/', (req, res) => {
     message: 'API del Polideportivo funcionando',
     database: 'Supabase PostgreSQL',
     emailService: 'EmailJS',
+    environment: process.env.NODE_ENV || 'development',
     status: 'online',
     rutas: {
       reservas: '/reservas',
-      recuperacion: '/recupera'
+      recuperacion: '/recupera',
+      login: '/login',
+      registro: '/registro'
     }
+  });
+});
+
+// Ruta para verificar variables de entorno (solo en desarrollo)
+app.get('/env-check', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.json({ message: 'Variables de entorno ocultas en producción' });
+  }
+  
+  res.json({
+    supabase_url: supabaseUrl ? '✅ Configurado' : '❌ Faltante',
+    supabase_key: supabaseKey ? '✅ Configurado' : '❌ Faltante',
+    emailjs_public: emailjsConfig.publicKey ? '✅ Configurado' : '❌ Faltante',
+    emailjs_private: emailjsConfig.privateKey ? '✅ Configurado' : '❌ Faltante',
+    jwt_secret: JWT_SECRET ? '✅ Configurado' : '❌ Faltante',
+    node_env: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -457,6 +489,8 @@ app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
   console.log(`🌐 URL: http://localhost:${PORT}`);
   console.log(`🗄️  Database: Supabase PostgreSQL`);
+  console.log(`🔐 JWT Secret: ${JWT_SECRET ? '✅ Configurado' : '❌ Usando valor por defecto'}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Test Supabase: http://localhost:${PORT}/test-supabase`);
   console.log(`📧 Test Email: http://localhost:${PORT}/test-email`);
   console.log(`📧 Test Email Real: http://localhost:${PORT}/test-email-real`);
@@ -465,6 +499,7 @@ app.listen(PORT, async () => {
   console.log(`📋 Debug Reservas: http://localhost:${PORT}/debug/reservas`);
   console.log(`🔧 Fix Emails: http://localhost:${PORT}/debug/fix-emails`);
   console.log(`⚙️  Status: http://localhost:${PORT}/emailjs-status`);
+  console.log(`🔍 Env Check: http://localhost:${PORT}/env-check`);
   console.log('');
   
   // Verificar conexión a Supabase
