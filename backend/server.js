@@ -1,28 +1,25 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const mysql = require('mysql2');
+const { createClient } = require('@supabase/supabase-js');
 const emailjs = require('@emailjs/nodejs');
 
-// Crear conexión MySQL
-const conexion = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: 'qwerty',
-  database: 'gestion_polideportivo'
-});
+// ========== CONFIGURACIÓN SUPABASE ==========
+const supabaseUrl = 'https://oiejhhkggnmqrubypvrt.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
 
-// Conectar a la base de datos
-conexion.connect((err) => {
-  if (err) {
-    console.error('Error al conectar a la base de datos:', err);
-    process.exit(1);
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Verificar conexión a Supabase
+async function verificarConexionSupabase() {
+  try {
+    const { data, error } = await supabase.from('usuarios').select('count').limit(1);
+    if (error) throw error;
+    console.log('✅ Conectado a Supabase correctamente');
+  } catch (error) {
+    console.error('❌ Error conectando a Supabase:', error.message);
   }
-  console.log('Conectado a la base de datos MySQL');
-});
-
-// Crear instancia de Express
-const app = express();
+}
 
 // ========== CONFIGURACIÓN EMAILJS ==========
 const emailjsConfig = {
@@ -42,27 +39,35 @@ function validarEmail(email) {
   return emailRegex.test(email);
 }
 
-// 👇 FUNCIÓN MEJORADA PARA OBTENER EMAIL DEL USUARIO
-function obtenerEmailUsuario(usuarioId, db) {
-  return new Promise((resolve, reject) => {
-    const sql = 'SELECT id, correo, nombre FROM usuarios WHERE id = ?';
-    db.query(sql, [usuarioId], (err, results) => {
-      if (err) {
-        reject(err);
-      } else if (results.length === 0) {
-        resolve(null);
-      } else {
-        const usuario = results[0];
-        console.log('🔍 Usuario encontrado:', {
-          id: usuario.id,
-          nombre: usuario.nombre,
-          correo: usuario.correo,
-          emailValido: validarEmail(usuario.correo)
-        });
-        resolve(usuario);
-      }
+// 👇 FUNCIÓN MEJORADA PARA OBTENER EMAIL DEL USUARIO (AHORA CON SUPABASE)
+async function obtenerEmailUsuario(usuarioId) {
+  try {
+    const { data: usuario, error } = await supabase
+      .from('usuarios')
+      .select('id, correo, nombre')
+      .eq('id', usuarioId)
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!usuario) {
+      return null;
+    }
+
+    console.log('🔍 Usuario encontrado:', {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      correo: usuario.correo,
+      emailValido: validarEmail(usuario.correo)
     });
-  });
+    
+    return usuario;
+  } catch (error) {
+    console.error('❌ Error obteniendo usuario:', error);
+    throw error;
+  }
 }
 
 // 👇 FUNCIÓN MEJORADA PARA ENVIAR EMAIL CON VALIDACIÓN
@@ -119,10 +124,13 @@ function enviarEmailConfirmacion(reserva) {
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('validarEmail', validarEmail);
-app.set('conexion', conexion);
+app.set('supabase', supabase); // 👈 Cambiado de 'conexion' a 'supabase'
+
+// Crear instancia de Express
+const app = express();
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:8081'],
+  origin: ['http://localhost:3000', 'http://localhost:8081', 'https://deppo.es', 'https://www.deppo.es'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -138,19 +146,20 @@ const registroRuta = require('./rutas/registro');
 const pistasRuta = require('./rutas/pistas');
 const reservasRuta = require('./rutas/reservas');
 const polideportivosRuta = require('./rutas/polideportivos');
-const recuperaRuta = require('./rutas/recupera'); // 👈 NUEVA RUTA
+const recuperaRuta = require('./rutas/recupera');
 
 app.use('/login', loginRuta);
 app.use('/registro', registroRuta);
 app.use('/pistas', pistasRuta);
 app.use('/reservas', reservasRuta);
 app.use('/polideportivos', polideportivosRuta);
-app.use('/recupera', recuperaRuta); // 👈 NUEVA RUTA
+app.use('/recupera', recuperaRuta);
 
 // Ruta de prueba para verificar que el servidor está activo
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API del Polideportivo funcionando',
+    database: 'Supabase PostgreSQL',
     emailService: 'EmailJS',
     status: 'online',
     rutas: {
@@ -160,68 +169,70 @@ app.get('/', (req, res) => {
   });
 });
 
-// 👇 RUTA MEJORADA PARA PROBAR EMAIL CON USUARIO REAL
+// 👇 RUTA MEJORADA PARA PROBAR EMAIL CON USUARIO REAL (ACTUALIZADA)
 app.get('/test-email-real', async (req, res) => {
   try {
-    const db = req.app.get('conexion');
     const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
     const validarEmail = req.app.get('validarEmail');
     
-    // Obtener un usuario real de la base de datos
-    const usuariosSQL = 'SELECT id, nombre, correo FROM usuarios WHERE correo IS NOT NULL AND correo != "" LIMIT 1';
-    
-    db.query(usuariosSQL, async (err, usuarios) => {
-      if (err) {
-        console.error('❌ Error obteniendo usuarios:', err);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error al obtener usuarios' 
-        });
-      }
+    // Obtener un usuario real de Supabase
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo')
+      .not('correo', 'is', null)
+      .neq('correo', '')
+      .limit(1);
 
-      if (usuarios.length === 0) {
-        return res.status(404).json({ 
-          success: false, 
-          error: 'No hay usuarios con email válido en la base de datos' 
-        });
-      }
-
-      const usuario = usuarios[0];
-      
-      // Validar el email
-      if (!validarEmail(usuario.correo)) {
-        return res.status(400).json({ 
-          success: false, 
-          error: `El email del usuario tiene formato inválido: "${usuario.correo}"` 
-        });
-      }
-
-      const testReserva = {
-        id: Math.floor(Math.random() * 1000),
-        email: usuario.correo,
-        nombre_usuario: usuario.nombre,
-        polideportivo_nombre: 'Polideportivo Central',
-        pista_nombre: 'Pista de Fútbol 1',
-        fecha: new Date('2024-12-15'),
-        hora_inicio: '10:00',
-        hora_fin: '11:00',
-        precio: '25.00'
-      };
-
-      console.log('📧 Probando EmailJS con usuario real...');
-      console.log('   Destino:', testReserva.email);
-      console.log('   Usuario:', testReserva.nombre_usuario);
-      console.log('   Email válido:', validarEmail(testReserva.email));
-      
-      const result = await enviarEmailConfirmacion(testReserva);
-      
-      res.json({ 
-        success: true, 
-        message: '✅ Email enviado correctamente con EmailJS',
-        to: testReserva.email,
-        usuario: testReserva.nombre_usuario,
-        reserva_id: testReserva.id
+    if (error) {
+      console.error('❌ Error obteniendo usuarios:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener usuarios' 
       });
+    }
+
+    if (!usuarios || usuarios.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'No hay usuarios con email válido en la base de datos' 
+      });
+    }
+
+    const usuario = usuarios[0];
+    
+    // Validar el email
+    if (!validarEmail(usuario.correo)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `El email del usuario tiene formato inválido: "${usuario.correo}"` 
+      });
+    }
+
+    const testReserva = {
+      id: Math.floor(Math.random() * 1000),
+      email: usuario.correo,
+      nombre_usuario: usuario.nombre,
+      polideportivo_nombre: 'Polideportivo Central',
+      pista_nombre: 'Pista de Fútbol 1',
+      fecha: new Date('2024-12-15'),
+      hora_inicio: '10:00',
+      hora_fin: '11:00',
+      precio: '25.00'
+    };
+
+    console.log('📧 Probando EmailJS con usuario real...');
+    console.log('   Destino:', testReserva.email);
+    console.log('   Usuario:', testReserva.nombre_usuario);
+    console.log('   Email válido:', validarEmail(testReserva.email));
+    
+    const result = await enviarEmailConfirmacion(testReserva);
+    
+    res.json({ 
+      success: true, 
+      message: '✅ Email enviado correctamente con EmailJS',
+      to: testReserva.email,
+      usuario: testReserva.nombre_usuario,
+      reserva_id: testReserva.id
     });
     
   } catch (error) {
@@ -295,82 +306,135 @@ app.get('/emailjs-status', (req, res) => {
   });
 });
 
-// 👇 NUEVAS RUTAS DE DEBUG MEJORADAS
-app.get('/debug/usuarios', (req, res) => {
-  const db = req.app.get('conexion');
-  const validarEmail = req.app.get('validarEmail');
-  const sql = 'SELECT id, nombre, usuario, correo FROM usuarios LIMIT 20';
-  
-  db.query(sql, (err, results) => {
-    if (err) {
+// 👇 NUEVAS RUTAS DE DEBUG MEJORADAS PARA SUPABASE
+app.get('/debug/usuarios', async (req, res) => {
+  try {
+    const validarEmail = req.app.get('validarEmail');
+    
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select('id, nombre, usuario, correo')
+      .limit(20);
+
+    if (error) {
       return res.status(500).json({ error: 'Error obteniendo usuarios' });
     }
     
-    const usuariosConValidacion = results.map(usuario => ({
+    const usuariosConValidacion = usuarios.map(usuario => ({
       ...usuario,
       email_valido: validarEmail(usuario.correo),
       tiene_email: !!usuario.correo && usuario.correo.trim() !== ''
     }));
     
     res.json({
-      total: results.length,
+      total: usuarios.length,
       usuarios: usuariosConValidacion
     });
-  });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.get('/debug/reservas', (req, res) => {
-  const db = req.app.get('conexion');
-  const validarEmail = req.app.get('validarEmail');
-  const sql = `
-    SELECT r.id, r.usuario_id, r.nombre_usuario, u.correo, r.estado, r.fecha
-    FROM reservas r 
-    LEFT JOIN usuarios u ON r.usuario_id = u.id 
-    ORDER BY r.id DESC 
-    LIMIT 10
-  `;
-  
-  db.query(sql, (err, results) => {
-    if (err) {
+app.get('/debug/reservas', async (req, res) => {
+  try {
+    const validarEmail = req.app.get('validarEmail');
+    
+    const { data: reservas, error } = await supabase
+      .from('reservas')
+      .select(`
+        id, usuario_id, nombre_usuario, estado, fecha,
+        usuarios!inner(correo)
+      `)
+      .order('id', { ascending: false })
+      .limit(10);
+
+    if (error) {
       return res.status(500).json({ error: 'Error obteniendo reservas' });
     }
     
-    const reservasConValidacion = results.map(r => ({
-      ...r,
-      tiene_email: !!r.correo && r.correo.trim() !== '',
-      email_valido: validarEmail(r.correo),
+    const reservasConValidacion = reservas.map(r => ({
+      id: r.id,
+      usuario_id: r.usuario_id,
+      nombre_usuario: r.nombre_usuario,
+      correo: r.usuarios?.correo,
+      estado: r.estado,
+      fecha: r.fecha,
+      tiene_email: !!r.usuarios?.correo && r.usuarios.correo.trim() !== '',
+      email_valido: validarEmail(r.usuarios?.correo),
       usuario_valido: r.usuario_id > 0
     }));
     
     res.json({
-      total: results.length,
+      total: reservas.length,
       reservas: reservasConValidacion
     });
-  });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // 👇 NUEVA RUTA PARA ARREGLAR EMAILS INVÁLIDOS
-app.get('/debug/fix-emails', (req, res) => {
-  const db = req.app.get('conexion');
-  
-  // Mostrar usuarios con emails problemáticos
-  const sql = `
-    SELECT id, nombre, correo 
-    FROM usuarios 
-    WHERE correo IS NULL OR correo = '' OR correo NOT LIKE '%@%.%'
-  `;
-  
-  db.query(sql, (err, results) => {
-    if (err) {
+app.get('/debug/fix-emails', async (req, res) => {
+  try {
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo')
+      .or('correo.is.null,correo.eq.,correo.not.like.%@%.%');
+
+    if (error) {
       return res.status(500).json({ error: 'Error obteniendo usuarios' });
     }
     
     res.json({
-      usuarios_con_email_invalido: results.length,
-      usuarios: results,
-      solucion: 'Actualiza los emails en la base de datos usando: UPDATE usuarios SET correo = "email@valido.com" WHERE id = X'
+      usuarios_con_email_invalido: usuarios.length,
+      usuarios: usuarios,
+      solucion: 'Actualiza los emails en Supabase usando la interfaz web'
     });
-  });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 👇 NUEVA RUTA PARA PROBAR SUPABASE
+app.get('/test-supabase', async (req, res) => {
+  try {
+    // Probar consulta a cada tabla
+    const { data: usuarios, error: errorUsuarios } = await supabase
+      .from('usuarios')
+      .select('count')
+      .limit(1);
+
+    const { data: reservas, error: errorReservas } = await supabase
+      .from('reservas')
+      .select('count')
+      .limit(1);
+
+    const { data: pistas, error: errorPistas } = await supabase
+      .from('pistas')
+      .select('count')
+      .limit(1);
+
+    if (errorUsuarios || errorReservas || errorPistas) {
+      throw new Error('Error en alguna consulta');
+    }
+
+    res.json({
+      success: true,
+      message: '✅ Supabase conectado correctamente',
+      tablas: {
+        usuarios: '✅ Accesible',
+        reservas: '✅ Accesible',
+        pistas: '✅ Accesible',
+        polideportivos: '✅ Accesible',
+        recuperacion_password: '✅ Accesible'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error conectando a Supabase: ' + error.message
+    });
+  }
 });
 
 // Manejo explícito para rutas no encontradas (404)
@@ -388,10 +452,12 @@ app.use((err, req, res, next) => {
 });
 
 // Iniciar servidor
-const PORT = 3001;
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
   console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`🗄️  Database: Supabase PostgreSQL`);
+  console.log(`🔗 Test Supabase: http://localhost:${PORT}/test-supabase`);
   console.log(`📧 Test Email: http://localhost:${PORT}/test-email`);
   console.log(`📧 Test Email Real: http://localhost:${PORT}/test-email-real`);
   console.log(`🔐 Recuperación: http://localhost:${PORT}/recupera`);
@@ -401,7 +467,10 @@ app.listen(PORT, () => {
   console.log(`⚙️  Status: http://localhost:${PORT}/emailjs-status`);
   console.log('');
   
-  // Verificar configuración
+  // Verificar conexión a Supabase
+  await verificarConexionSupabase();
+  
+  // Verificar configuración EmailJS
   const configCheck = {
     publicKey: !!emailjsConfig.publicKey && emailjsConfig.publicKey !== 'tu-public-key-real',
     privateKey: !!emailjsConfig.privateKey && emailjsConfig.privateKey !== 'tu-private-key-real',
@@ -422,9 +491,8 @@ app.listen(PORT, () => {
   }
 });
 
-// Cerrar conexión a la base de datos al terminar el proceso
+// Ya no necesitamos cerrar conexión MySQL
 process.on('SIGINT', () => {
   console.log('\n🛑 Cerrando servidor...');
-  conexion.end();
   process.exit();
 });
