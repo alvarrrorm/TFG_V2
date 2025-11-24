@@ -127,13 +127,7 @@ function enviarEmailConfirmacion(reserva) {
 // Crear instancia de Express
 const app = express();
 
-// Guardar las funciones en app para usarlas en las rutas
-app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
-app.set('obtenerEmailUsuario', obtenerEmailUsuario);
-app.set('validarEmail', validarEmail);
-app.set('supabase', supabase);
-app.set('jwt_secret', JWT_SECRET);
-
+// ========== CONFIGURACIÓN CORS MEJORADA ==========
 app.use(cors({
   origin: [
     'http://localhost:3000', 
@@ -141,16 +135,34 @@ app.use(cors({
     'https://deppo.es', 
     'https://www.deppo.es',
     'https://*.railway.app',
-    'https://*.vercel.app'
+    'https://*.vercel.app',
+    'https://gestion-pink.vercel.app'  // 👈 AÑADIDO ESPECÍFICAMENTE
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'], // 👈 AÑADIDO X-Requested-With
   credentials: true,
+  optionsSuccessStatus: 204
 }));
+
+// 👇 MANEJAR PREFLIGHT REQUESTS EXPLÍCITAMENTE
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(204).send();
+});
 
 // Middlewares para parsear JSON y datos urlencoded
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Guardar las funciones en app para usarlas en las rutas
+app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
+app.set('obtenerEmailUsuario', obtenerEmailUsuario);
+app.set('validarEmail', validarEmail);
+app.set('supabase', supabase);
+app.set('jwt_secret', JWT_SECRET);
 
 // ========== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND ==========
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -480,6 +492,7 @@ app.listen(PORT, async () => {
   console.log(`📁 Sirviendo frontend desde: ${path.join(__dirname, 'dist')}`);
   console.log(`🔗 Test Supabase: http://localhost:${PORT}/api/test-supabase`);
   console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
+  console.log(`🔧 CORS configurado para Vercel: https://gestion-pink.vercel.app`);
   console.log('');
   
   // Verificar conexión a Supabase
