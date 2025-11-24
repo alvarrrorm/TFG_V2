@@ -4,6 +4,8 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const emailjs = require('@emailjs/nodejs');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 // ========== CONFIGURACIÓN SUPABASE ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
@@ -128,35 +130,49 @@ function enviarEmailConfirmacion(reserva) {
 const app = express();
 
 // ========== CONFIGURACIÓN CORS MEJORADA ==========
-app.use(cors({
-  origin: [
-    'http://localhost:3000', 
-    'http://localhost:8081', 
-    'https://deppo.es', 
-    'https://www.deppo.es',
-    'https://*.railway.app',
-    'https://*.vercel.app',
-    'https://gestion-pink.vercel.app',
-    'https://gestion-polideportivos-web.vercel.app'  // 👈 AÑADIDO ESPECÍFICAMENTE
-  ],
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000', 
+      'http://localhost:8081', 
+      'https://deppo.es', 
+      'https://www.deppo.es',
+      /\.railway\.app$/,
+      /\.vercel\.app$/,
+      'https://gestion-pink.vercel.app',
+      'https://gestion-polideportivos-web.vercel.app'
+    ];
+    
+    // Permitir requests sin origin (como mobile apps o postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.some(allowedOrigin => {
+      if (typeof allowedOrigin === 'string') {
+        return allowedOrigin === origin;
+      } else if (allowedOrigin instanceof RegExp) {
+        return allowedOrigin.test(origin);
+      }
+      return false;
+    })) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'], // 👈 AÑADIDO X-Requested-With
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
-  optionsSuccessStatus: 204
-}));
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 
 // 👇 MANEJAR PREFLIGHT REQUESTS EXPLÍCITAMENTE
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.status(204).send();
-});
+app.options('*', cors(corsOptions));
 
 // Middlewares para parsear JSON y datos urlencoded
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Guardar las funciones en app para usarlas en las rutas
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
@@ -164,43 +180,147 @@ app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('validarEmail', validarEmail);
 app.set('supabase', supabase);
 app.set('jwt_secret', JWT_SECRET);
+app.set('jwt', jwt);
+app.set('bcrypt', bcrypt);
 
 // ========== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND ==========
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// Rutas
-const loginRuta = require('./rutas/login');
-const registroRuta = require('./rutas/registro');
-const pistasRuta = require('./rutas/pistas');
-const reservasRuta = require('./rutas/reservas');
-const polideportivosRuta = require('./rutas/polideportivos');
-const recuperaRuta = require('./rutas/recupera');
+// ========== RUTA DE LOGIN SIMPLIFICADA (PARA PRUEBAS) ==========
+app.post('/api/login', async (req, res) => {
+  try {
+    const { usuario, password } = req.body;
+    
+    console.log('🔐 Intento de login para usuario:', usuario);
+    
+    if (!usuario || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usuario y contraseña son requeridos'
+      });
+    }
 
-// ========== RUTAS DEL API CON PREFIJO /api ==========
-app.use('/api/login', loginRuta);
-app.use('/api/registro', registroRuta);
-app.use('/api/pistas', pistasRuta);
-app.use('/api/reservas', reservasRuta);
-app.use('/api/polideportivos', polideportivosRuta);
-app.use('/api/recupera', recuperaRuta);
+    // Buscar usuario en Supabase
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('usuario', usuario)
+      .single();
 
-// ========== RUTAS DEL API ==========
+    if (error || !user) {
+      console.log('❌ Usuario no encontrado:', usuario);
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    // Verificar contraseña (asumiendo que está hasheada)
+    // Si las contraseñas están en texto plano, compara directamente
+    let passwordValid = false;
+    
+    if (user.password_hash) {
+      // Si tienes contraseñas hasheadas
+      passwordValid = await bcrypt.compare(password, user.password_hash);
+    } else if (user.password) {
+      // Si tienes contraseñas en texto plano (no recomendado)
+      passwordValid = user.password === password;
+    } else {
+      console.log('❌ No se encontró campo de contraseña para el usuario');
+      return res.status(401).json({
+        success: false,
+        error: 'Error en la configuración de contraseñas'
+      });
+    }
+
+    if (!passwordValid) {
+      console.log('❌ Contraseña incorrecta para usuario:', usuario);
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        usuario: user.usuario,
+        nombre: user.nombre,
+        email: user.correo
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Login exitoso para usuario:', usuario);
+    
+    res.json({
+      success: true,
+      message: 'Login exitoso',
+      token: token,
+      user: {
+        id: user.id,
+        usuario: user.usuario,
+        nombre: user.nombre,
+        email: user.correo
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en login:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor: ' + error.message
+    });
+  }
+});
+
+// ========== RUTAS BÁSICAS DEL API ==========
 app.get('/api', (req, res) => {
   res.json({ 
     message: 'API del Polideportivo funcionando',
     database: 'Supabase PostgreSQL',
     emailService: 'EmailJS',
     environment: process.env.NODE_ENV || 'development',
-    status: 'online'
+    status: 'online',
+    timestamp: new Date().toISOString()
   });
 });
 
-// 👇 RUTA MEJORADA PARA PROBAR EMAIL CON USUARIO REAL (ACTUALIZADA)
+// Ruta de health check
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    message: 'Backend is running',
+    timestamp: new Date().toISOString(),
+    database: 'Supabase',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Ruta para verificar configuración de EmailJS
+app.get('/api/emailjs-status', (req, res) => {
+  const config = {
+    publicKey: emailjsConfig.publicKey ? '✅ Configurada' : '❌ Faltante',
+    privateKey: emailjsConfig.privateKey ? '✅ Configurada' : '❌ Faltante',
+    serviceId: emailjsServiceId ? '✅ Configurado' : '❌ Faltante',
+    templateId: emailjsTemplateId ? '✅ Configurado' : '❌ Faltante'
+  };
+
+  const todosConfigurados = emailjsConfig.publicKey && emailjsConfig.privateKey && 
+                           emailjsServiceId && emailjsTemplateId;
+
+  res.json({
+    service: 'EmailJS',
+    status: todosConfigurados ? '✅ Listo' : '❌ Configuración incompleta',
+    config: config
+  });
+});
+
+// 👇 RUTA MEJORADA PARA PROBAR EMAIL CON USUARIO REAL
 app.get('/api/test-email-real', async (req, res) => {
   try {
-    const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
-    const validarEmail = req.app.get('validarEmail');
-    
     // Obtener un usuario real de Supabase
     const { data: usuarios, error } = await supabase
       .from('usuarios')
@@ -272,155 +392,6 @@ app.get('/api/test-email-real', async (req, res) => {
   }
 });
 
-// Ruta simple para probar el email (mantener compatibilidad)
-app.get('/api/test-email', async (req, res) => {
-  try {
-    const testReserva = {
-      id: Math.floor(Math.random() * 1000),
-      email: 'alvaroramirezm8@gmail.com',
-      nombre_usuario: 'Alvaro Ramirez',
-      polideportivo_nombre: 'Polideportivo Central',
-      pista_nombre: 'Pista de Fútbol 1',
-      fecha: new Date('2024-12-15'),
-      hora_inicio: '10:00',
-      hora_fin: '11:00',
-      precio: '25.00'
-    };
-
-    console.log('📧 Probando EmailJS...');
-    console.log('   Destino:', testReserva.email);
-    
-    const result = await enviarEmailConfirmacion(testReserva);
-    
-    res.json({ 
-      success: true, 
-      message: '✅ Email enviado correctamente con EmailJS',
-      to: testReserva.email,
-      reserva_id: testReserva.id
-    });
-    
-  } catch (error) {
-    console.error('❌ Error en test-email:', error);
-    
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      details: 'Error enviando email de prueba'
-    });
-  }
-});
-
-// Ruta para verificar configuración de EmailJS
-app.get('/api/emailjs-status', (req, res) => {
-  const config = {
-    publicKey: emailjsConfig.publicKey ? '✅ Configurada' : '❌ Faltante',
-    privateKey: emailjsConfig.privateKey ? '✅ Configurada' : '❌ Faltante',
-    serviceId: emailjsServiceId ? '✅ Configurado' : '❌ Faltante',
-    templateId: emailjsTemplateId ? '✅ Configurado' : '❌ Faltante'
-  };
-
-  const todosConfigurados = emailjsConfig.publicKey && emailjsConfig.privateKey && 
-                           emailjsServiceId && emailjsTemplateId;
-
-  res.json({
-    service: 'EmailJS',
-    status: todosConfigurados ? '✅ Listo' : '❌ Configuración incompleta',
-    config: config,
-    nextSteps: todosConfigurados ? 
-      'Puedes probar el email en /api/test-email' : 
-      'Completa la configuración en server.js'
-  });
-});
-
-// 👇 NUEVAS RUTAS DE DEBUG MEJORADAS PARA SUPABASE
-app.get('/api/debug/usuarios', async (req, res) => {
-  try {
-    const validarEmail = req.app.get('validarEmail');
-    
-    const { data: usuarios, error } = await supabase
-      .from('usuarios')
-      .select('id, nombre, usuario, correo')
-      .limit(20);
-
-    if (error) {
-      return res.status(500).json({ error: 'Error obteniendo usuarios' });
-    }
-    
-    const usuariosConValidacion = usuarios.map(usuario => ({
-      ...usuario,
-      email_valido: validarEmail(usuario.correo),
-      tiene_email: !!usuario.correo && usuario.correo.trim() !== ''
-    }));
-    
-    res.json({
-      total: usuarios.length,
-      usuarios: usuariosConValidacion
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/debug/reservas', async (req, res) => {
-  try {
-    const validarEmail = req.app.get('validarEmail');
-    
-    const { data: reservas, error } = await supabase
-      .from('reservas')
-      .select(`
-        id, usuario_id, nombre_usuario, estado, fecha,
-        usuarios!inner(correo)
-      `)
-      .order('id', { ascending: false })
-      .limit(10);
-
-    if (error) {
-      return res.status(500).json({ error: 'Error obteniendo reservas' });
-    }
-    
-    const reservasConValidacion = reservas.map(r => ({
-      id: r.id,
-      usuario_id: r.usuario_id,
-      nombre_usuario: r.nombre_usuario,
-      correo: r.usuarios?.correo,
-      estado: r.estado,
-      fecha: r.fecha,
-      tiene_email: !!r.usuarios?.correo && r.usuarios.correo.trim() !== '',
-      email_valido: validarEmail(r.usuarios?.correo),
-      usuario_valido: r.usuario_id > 0
-    }));
-    
-    res.json({
-      total: reservas.length,
-      reservas: reservasConValidacion
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 👇 NUEVA RUTA PARA ARREGLAR EMAILS INVÁLIDOS
-app.get('/api/debug/fix-emails', async (req, res) => {
-  try {
-    const { data: usuarios, error } = await supabase
-      .from('usuarios')
-      .select('id, nombre, correo')
-      .or('correo.is.null,correo.eq.,correo.not.like.%@%.%');
-
-    if (error) {
-      return res.status(500).json({ error: 'Error obteniendo usuarios' });
-    }
-    
-    res.json({
-      usuarios_con_email_invalido: usuarios.length,
-      usuarios: usuarios,
-      solucion: 'Actualiza los emails en Supabase usando la interfaz web'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // 👇 NUEVA RUTA PARA PROBAR SUPABASE
 app.get('/api/test-supabase', async (req, res) => {
   try {
@@ -450,9 +421,7 @@ app.get('/api/test-supabase', async (req, res) => {
       tablas: {
         usuarios: '✅ Accesible',
         reservas: '✅ Accesible',
-        pistas: '✅ Accesible',
-        polideportivos: '✅ Accesible',
-        recuperacion_password: '✅ Accesible'
+        pistas: '✅ Accesible'
       }
     });
   } catch (error) {
@@ -461,6 +430,33 @@ app.get('/api/test-supabase', async (req, res) => {
       error: 'Error conectando a Supabase: ' + error.message
     });
   }
+});
+
+// ========== MIDDLEWARE DE AUTENTICACIÓN ==========
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token de acceso requerido' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Token inválido o expirado' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Ruta protegida de ejemplo
+app.get('/api/protected', authenticateToken, (req, res) => {
+  res.json({
+    success: true,
+    message: 'Acceso a ruta protegida exitoso',
+    user: req.user
+  });
 });
 
 // ========== PARA TODAS LAS DEMÁS RUTAS, SIRVE EL FRONTEND ==========
@@ -476,9 +472,18 @@ app.use((req, res) => {
 // Manejo global de errores
 app.use((err, req, res, next) => {
   console.error('Error global:', err.stack);
+  
+  // Manejar errores de CORS
+  if (err.message === 'No permitido por CORS') {
+    return res.status(403).json({ 
+      error: 'Origen no permitido por CORS',
+      origin: req.headers.origin 
+    });
+  }
+  
   res.status(500).json({ 
     error: 'Error interno del servidor',
-    message: err.message
+    message: process.env.NODE_ENV === 'production' ? 'Algo salió mal' : err.message
   });
 });
 
@@ -491,16 +496,15 @@ app.listen(PORT, async () => {
   console.log(`🔐 JWT Secret: ${JWT_SECRET ? '✅ Configurado' : '❌ Usando valor por defecto'}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`📁 Sirviendo frontend desde: ${path.join(__dirname, 'dist')}`);
+  console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
   console.log(`🔗 Test Supabase: http://localhost:${PORT}/api/test-supabase`);
-  console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
-  console.log(`🔧 CORS configurado para Vercel: https://gestion-pink.vercel.app`);
+  console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email-real`);
   console.log('');
   
   // Verificar conexión a Supabase
   await verificarConexionSupabase();
 });
 
-// Ya no necesitamos cerrar conexión MySQL
 process.on('SIGINT', () => {
   console.log('\n🛑 Cerrando servidor...');
   process.exit();
