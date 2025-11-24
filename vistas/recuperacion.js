@@ -85,7 +85,7 @@ export default function RecuperarPassword({ navigation }) {
     }
 
     try {
-      const response = await fetch('https://tfgv2-production.up.railway.app/recupera/solicitar-recuperacion', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/api/recupera/solicitar-recuperacion', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +125,7 @@ export default function RecuperarPassword({ navigation }) {
     }
 
     try {
-      const response = await fetch('https://tfgv2-production.up.railway.app/recupera/verificar-codigo', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/api/recupera/verificar-codigo', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -177,7 +177,7 @@ export default function RecuperarPassword({ navigation }) {
     }
 
     try {
-      const response = await fetch('https://tfgv2-production.up.railway.app/recupera/cambiar-password', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/api/recupera/cambiar-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -220,7 +220,7 @@ export default function RecuperarPassword({ navigation }) {
     setMensajeError('');
     
     try {
-      const response = await fetch('https://tfgv2-production.up.railway.app/recupera/reenviar-codigo', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/api/recupera/reenviar-codigo', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

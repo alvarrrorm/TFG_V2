@@ -222,7 +222,7 @@ export default function FormularioReserva({ navigation }) {
     const fetchPolideportivos = async () => {
       setLoadingPolideportivos(true);
       try {
-        const res = await fetch('https://tfgv2-production.up.railway.app/polideportivos');
+        const res = await fetch('https://tfgv2-production.up.railway.app/api/polideportivos');
         const data = await res.json();
         if (data.success) setPolideportivos(data.data);
       } catch (error) {
@@ -239,7 +239,7 @@ export default function FormularioReserva({ navigation }) {
     const fetchTodasLasPistas = async () => {
       setLoadingPistas(true);
       try {
-        const res = await fetch('https://tfgv2-production.up.railway.app/pistas/disponibles');
+        const res = await fetch('https://tfgv2-production.up.railway.app/api/pistas/disponibles');
         const response = await res.json();
 
         if (!response.success || !Array.isArray(response.data)) {
@@ -263,7 +263,7 @@ export default function FormularioReserva({ navigation }) {
       if (!dni) return;
       
       try {
-        const res = await fetch(`https://tfgv2-production.up.railway.app/reservas?nombre_usuario=${encodeURIComponent(nombre)}`);
+        const res = await fetch(`https://tfgv2-production.up.railway.app/api/reservas?nombre_usuario=${encodeURIComponent(nombre)}`);
         const data = await res.json();
         
         if (data.success) {
@@ -287,7 +287,7 @@ export default function FormularioReserva({ navigation }) {
       setValidandoDisponibilidad(true);
       try {
         const res = await fetch(
-          `https://tfgv2-production.up.railway.app/reservas/disponibilidad?fecha=${form.fecha}&polideportivo=${form.polideportivo}`
+          `https://tfgv2-production.up.railway.app/api/reservas/disponibilidad?fecha=${form.fecha}&polideportivo=${form.polideportivo}`
         );
         const data = await res.json();
         
@@ -503,7 +503,7 @@ export default function FormularioReserva({ navigation }) {
       if (reservaParaEditar) {
         // 👇 MODO EDICIÓN
         console.log('🔄 Actualizando reserva existente ID:', reservaParaEditar.id);
-        response = await fetch(`https://tfgv2-production.up.railway.app/reservas/${reservaParaEditar.id}`, {
+        response = await fetch(`https://tfgv2-production.up.railway.app/api/reservas/${reservaParaEditar.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reservaData),
@@ -511,7 +511,7 @@ export default function FormularioReserva({ navigation }) {
       } else {
         // 👇 MODO CREACIÓN
         console.log('🆕 Creando nueva reserva');
-        response = await fetch('https://tfgv2-production.up.railway.app/reservas', {
+        response = await fetch('https://tfgv2-production.up.railway.app/api/reservas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reservaData),

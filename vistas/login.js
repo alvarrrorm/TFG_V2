@@ -73,7 +73,7 @@ export default function Login({ navigation }) {
     }
 
     try {
-      const response = await fetch('https://tfgv2-production.up.railway.app/login', {
+      const response = await fetch('https://tfgv2-production.up.railway.app/api/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

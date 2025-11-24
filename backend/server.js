@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const emailjs = require('@emailjs/nodejs');
 
@@ -34,8 +35,6 @@ const emailjsTemplateId = 'template_hfuxqzm';
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
 console.log('📧 Configurando EmailJS...');
-console.log('🔐 JWT Secret:', JWT_SECRET ? '✅ Configurado' : '❌ Usando valor por defecto');
-console.log('🗄️  Supabase URL:', supabaseUrl ? '✅ Configurado' : '❌ Usando valor por defecto');
 
 // 👇 FUNCIÓN MEJORADA PARA VALIDAR EMAIL
 function validarEmail(email) {
@@ -133,7 +132,7 @@ app.set('enviarEmailConfirmacion', enviarEmailConfirmacion);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('validarEmail', validarEmail);
 app.set('supabase', supabase);
-app.set('jwt_secret', JWT_SECRET); // 👈 Añadir JWT secret para las rutas
+app.set('jwt_secret', JWT_SECRET);
 
 app.use(cors({
   origin: [
@@ -153,6 +152,9 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ========== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND ==========
+app.use(express.static(path.join(__dirname, 'dist')));
+
 // Rutas
 const loginRuta = require('./rutas/login');
 const registroRuta = require('./rutas/registro');
@@ -161,48 +163,27 @@ const reservasRuta = require('./rutas/reservas');
 const polideportivosRuta = require('./rutas/polideportivos');
 const recuperaRuta = require('./rutas/recupera');
 
-app.use('/login', loginRuta);
-app.use('/registro', registroRuta);
-app.use('/pistas', pistasRuta);
-app.use('/reservas', reservasRuta);
-app.use('/polideportivos', polideportivosRuta);
-app.use('/recupera', recuperaRuta);
+// ========== RUTAS DEL API CON PREFIJO /api ==========
+app.use('/api/login', loginRuta);
+app.use('/api/registro', registroRuta);
+app.use('/api/pistas', pistasRuta);
+app.use('/api/reservas', reservasRuta);
+app.use('/api/polideportivos', polideportivosRuta);
+app.use('/api/recupera', recuperaRuta);
 
-// Ruta de prueba para verificar que el servidor está activo
-app.get('/', (req, res) => {
+// ========== RUTAS DEL API ==========
+app.get('/api', (req, res) => {
   res.json({ 
     message: 'API del Polideportivo funcionando',
     database: 'Supabase PostgreSQL',
     emailService: 'EmailJS',
     environment: process.env.NODE_ENV || 'development',
-    status: 'online',
-    rutas: {
-      reservas: '/reservas',
-      recuperacion: '/recupera',
-      login: '/login',
-      registro: '/registro'
-    }
-  });
-});
-
-// Ruta para verificar variables de entorno (solo en desarrollo)
-app.get('/env-check', (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.json({ message: 'Variables de entorno ocultas en producción' });
-  }
-  
-  res.json({
-    supabase_url: supabaseUrl ? '✅ Configurado' : '❌ Faltante',
-    supabase_key: supabaseKey ? '✅ Configurado' : '❌ Faltante',
-    emailjs_public: emailjsConfig.publicKey ? '✅ Configurado' : '❌ Faltante',
-    emailjs_private: emailjsConfig.privateKey ? '✅ Configurado' : '❌ Faltante',
-    jwt_secret: JWT_SECRET ? '✅ Configurado' : '❌ Faltante',
-    node_env: process.env.NODE_ENV || 'development'
+    status: 'online'
   });
 });
 
 // 👇 RUTA MEJORADA PARA PROBAR EMAIL CON USUARIO REAL (ACTUALIZADA)
-app.get('/test-email-real', async (req, res) => {
+app.get('/api/test-email-real', async (req, res) => {
   try {
     const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
     const validarEmail = req.app.get('validarEmail');
@@ -279,7 +260,7 @@ app.get('/test-email-real', async (req, res) => {
 });
 
 // Ruta simple para probar el email (mantener compatibilidad)
-app.get('/test-email', async (req, res) => {
+app.get('/api/test-email', async (req, res) => {
   try {
     const testReserva = {
       id: Math.floor(Math.random() * 1000),
@@ -317,7 +298,7 @@ app.get('/test-email', async (req, res) => {
 });
 
 // Ruta para verificar configuración de EmailJS
-app.get('/emailjs-status', (req, res) => {
+app.get('/api/emailjs-status', (req, res) => {
   const config = {
     publicKey: emailjsConfig.publicKey ? '✅ Configurada' : '❌ Faltante',
     privateKey: emailjsConfig.privateKey ? '✅ Configurada' : '❌ Faltante',
@@ -333,13 +314,13 @@ app.get('/emailjs-status', (req, res) => {
     status: todosConfigurados ? '✅ Listo' : '❌ Configuración incompleta',
     config: config,
     nextSteps: todosConfigurados ? 
-      'Puedes probar el email en /test-email' : 
+      'Puedes probar el email en /api/test-email' : 
       'Completa la configuración en server.js'
   });
 });
 
 // 👇 NUEVAS RUTAS DE DEBUG MEJORADAS PARA SUPABASE
-app.get('/debug/usuarios', async (req, res) => {
+app.get('/api/debug/usuarios', async (req, res) => {
   try {
     const validarEmail = req.app.get('validarEmail');
     
@@ -367,7 +348,7 @@ app.get('/debug/usuarios', async (req, res) => {
   }
 });
 
-app.get('/debug/reservas', async (req, res) => {
+app.get('/api/debug/reservas', async (req, res) => {
   try {
     const validarEmail = req.app.get('validarEmail');
     
@@ -406,7 +387,7 @@ app.get('/debug/reservas', async (req, res) => {
 });
 
 // 👇 NUEVA RUTA PARA ARREGLAR EMAILS INVÁLIDOS
-app.get('/debug/fix-emails', async (req, res) => {
+app.get('/api/debug/fix-emails', async (req, res) => {
   try {
     const { data: usuarios, error } = await supabase
       .from('usuarios')
@@ -428,7 +409,7 @@ app.get('/debug/fix-emails', async (req, res) => {
 });
 
 // 👇 NUEVA RUTA PARA PROBAR SUPABASE
-app.get('/test-supabase', async (req, res) => {
+app.get('/api/test-supabase', async (req, res) => {
   try {
     // Probar consulta a cada tabla
     const { data: usuarios, error: errorUsuarios } = await supabase
@@ -469,6 +450,11 @@ app.get('/test-supabase', async (req, res) => {
   }
 });
 
+// ========== PARA TODAS LAS DEMÁS RUTAS, SIRVE EL FRONTEND ==========
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
+
 // Manejo explícito para rutas no encontradas (404)
 app.use((req, res) => {
   res.status(404).json({ error: 'Ruta no encontrada' });
@@ -491,39 +477,13 @@ app.listen(PORT, async () => {
   console.log(`🗄️  Database: Supabase PostgreSQL`);
   console.log(`🔐 JWT Secret: ${JWT_SECRET ? '✅ Configurado' : '❌ Usando valor por defecto'}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Test Supabase: http://localhost:${PORT}/test-supabase`);
-  console.log(`📧 Test Email: http://localhost:${PORT}/test-email`);
-  console.log(`📧 Test Email Real: http://localhost:${PORT}/test-email-real`);
-  console.log(`🔐 Recuperación: http://localhost:${PORT}/recupera`);
-  console.log(`👤 Debug Usuarios: http://localhost:${PORT}/debug/usuarios`);
-  console.log(`📋 Debug Reservas: http://localhost:${PORT}/debug/reservas`);
-  console.log(`🔧 Fix Emails: http://localhost:${PORT}/debug/fix-emails`);
-  console.log(`⚙️  Status: http://localhost:${PORT}/emailjs-status`);
-  console.log(`🔍 Env Check: http://localhost:${PORT}/env-check`);
+  console.log(`📁 Sirviendo frontend desde: ${path.join(__dirname, 'dist')}`);
+  console.log(`🔗 Test Supabase: http://localhost:${PORT}/api/test-supabase`);
+  console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
   console.log('');
   
   // Verificar conexión a Supabase
   await verificarConexionSupabase();
-  
-  // Verificar configuración EmailJS
-  const configCheck = {
-    publicKey: !!emailjsConfig.publicKey && emailjsConfig.publicKey !== 'tu-public-key-real',
-    privateKey: !!emailjsConfig.privateKey && emailjsConfig.privateKey !== 'tu-private-key-real',
-    serviceId: !!emailjsServiceId && emailjsServiceId !== 'tu-service-id-real',
-    templateId: !!emailjsTemplateId && emailjsTemplateId !== 'tu-template-id-real'
-  };
-
-  if (configCheck.publicKey && configCheck.privateKey && configCheck.serviceId && configCheck.templateId) {
-    console.log('✅ EmailJS configurado correctamente');
-  } else {
-    console.log('❌ CONFIGURACIÓN EMAILJS INCOMPLETA:');
-    console.log('   Ve a: https://dashboard.emailjs.com/admin');
-    console.log('   Obtén tus claves y actualiza:');
-    console.log('   - publicKey');
-    console.log('   - privateKey'); 
-    console.log('   - serviceId');
-    console.log('   - templateId');
-  }
 });
 
 // Ya no necesitamos cerrar conexión MySQL
