@@ -2,13 +2,15 @@ const express = require('express');
 const router = express.Router();
 
 // Obtener todos los polideportivos
-router.get('/', (req, res) => {
-  const conexion = req.app.get('conexion');
+router.get('/', async (req, res) => {
+  const supabase = req.app.get('supabase');
 
-  conexion.query(`
-    SELECT * FROM polideportivos 
-    ORDER BY nombre ASC
-  `, (error, results) => {
+  try {
+    const { data: polideportivos, error } = await supabase
+      .from('polideportivos')
+      .select('*')
+      .order('nombre');
+
     if (error) {
       console.error('Error al obtener polideportivos:', error);
       return res.status(500).json({ 
@@ -19,20 +21,29 @@ router.get('/', (req, res) => {
 
     res.json({
       success: true,
-      data: results
+      data: polideportivos
     });
-  });
+  } catch (error) {
+    console.error('Error al obtener polideportivos:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener polideportivos' 
+    });
+  }
 });
 
 // Obtener un polideportivo por ID
-router.get('/:id', (req, res) => {
-  const conexion = req.app.get('conexion');
+router.get('/:id', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { id } = req.params;
 
-  conexion.query(`
-    SELECT * FROM polideportivos 
-    WHERE id = ?
-  `, [id], (error, results) => {
+  try {
+    const { data: polideportivo, error } = await supabase
+      .from('polideportivos')
+      .select('*')
+      .eq('id', id)
+      .single();
+
     if (error) {
       console.error('Error al obtener polideportivo:', error);
       return res.status(500).json({ 
@@ -41,7 +52,7 @@ router.get('/:id', (req, res) => {
       });
     }
 
-    if (results.length === 0) {
+    if (!polideportivo) {
       return res.status(404).json({ 
         success: false,
         error: 'Polideportivo no encontrado' 
@@ -50,15 +61,21 @@ router.get('/:id', (req, res) => {
 
     res.json({
       success: true,
-      data: results[0]
+      data: polideportivo
     });
-  });
+  } catch (error) {
+    console.error('Error al obtener polideportivo:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener polideportivo' 
+    });
+  }
 });
 
 // Crear nuevo polideportivo
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { nombre, direccion, telefono } = req.body;
-  const conexion = req.app.get('conexion');
+  const supabase = req.app.get('supabase');
 
   if (!nombre || !direccion) {
     return res.status(400).json({ 
@@ -67,17 +84,15 @@ router.post('/', (req, res) => {
     });
   }
 
-  // Verificar si ya existe un polideportivo con el mismo nombre
-  conexion.query('SELECT id FROM polideportivos WHERE nombre = ?', [nombre], (error, results) => {
-    if (error) {
-      console.error('Error al verificar polideportivo existente:', error);
-      return res.status(500).json({ 
-        success: false,
-        error: 'Error al verificar polideportivo existente' 
-      });
-    }
+  try {
+    // Verificar si ya existe un polideportivo con el mismo nombre
+    const { data: polideportivoExistente, error: checkError } = await supabase
+      .from('polideportivos')
+      .select('id')
+      .eq('nombre', nombre)
+      .single();
 
-    if (results.length > 0) {
+    if (polideportivoExistente) {
       return res.status(409).json({ 
         success: false,
         error: 'Ya existe un polideportivo con ese nombre' 
@@ -85,43 +100,43 @@ router.post('/', (req, res) => {
     }
 
     // Insertar nuevo polideportivo
-    conexion.query(
-      'INSERT INTO polideportivos (nombre, direccion, telefono) VALUES (?, ?, ?)',
-      [nombre.trim(), direccion.trim(), telefono ? telefono.trim() : null],
-      (error, results) => {
-        if (error) {
-          console.error('Error al crear polideportivo:', error);
-          return res.status(500).json({ 
-            success: false,
-            error: 'Error al crear polideportivo' 
-          });
-        }
+    const { data: nuevoPolideportivo, error: insertError } = await supabase
+      .from('polideportivos')
+      .insert([{
+        nombre: nombre.trim(),
+        direccion: direccion.trim(),
+        telefono: telefono ? telefono.trim() : null
+      }])
+      .select()
+      .single();
 
-        // Obtener el polideportivo recién creado
-        conexion.query('SELECT * FROM polideportivos WHERE id = ?', [results.insertId], (error, polideportivoResults) => {
-          if (error || polideportivoResults.length === 0) {
-            console.error('Error al obtener polideportivo creado:', error);
-            return res.status(500).json({ 
-              success: false,
-              error: 'Error al obtener polideportivo creado' 
-            });
-          }
+    if (insertError) {
+      console.error('Error al crear polideportivo:', insertError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al crear polideportivo' 
+      });
+    }
 
-          res.status(201).json({
-            success: true,
-            data: polideportivoResults[0]
-          });
-        });
-      }
-    );
-  });
+    res.status(201).json({
+      success: true,
+      data: nuevoPolideportivo
+    });
+
+  } catch (error) {
+    console.error('Error al crear polideportivo:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al crear polideportivo' 
+    });
+  }
 });
 
 // Actualizar polideportivo
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { nombre, direccion, telefono } = req.body;
-  const conexion = req.app.get('conexion');
+  const supabase = req.app.get('supabase');
 
   if (!nombre || !direccion) {
     return res.status(400).json({ 
@@ -130,17 +145,15 @@ router.put('/:id', (req, res) => {
     });
   }
 
-  // Verificar que el polideportivo existe
-  conexion.query('SELECT id FROM polideportivos WHERE id = ?', [id], (error, results) => {
-    if (error) {
-      console.error('Error al verificar polideportivo:', error);
-      return res.status(500).json({ 
-        success: false,
-        error: 'Error al verificar polideportivo' 
-      });
-    }
+  try {
+    // Verificar que el polideportivo existe
+    const { data: polideportivoExistente, error: checkError } = await supabase
+      .from('polideportivos')
+      .select('id')
+      .eq('id', id)
+      .single();
 
-    if (results.length === 0) {
+    if (checkError || !polideportivoExistente) {
       return res.status(404).json({ 
         success: false,
         error: 'Polideportivo no encontrado' 
@@ -148,72 +161,68 @@ router.put('/:id', (req, res) => {
     }
 
     // Verificar si ya existe otro polideportivo con el mismo nombre
-    conexion.query('SELECT id FROM polideportivos WHERE nombre = ? AND id != ?', [nombre, id], (error, nombreResults) => {
-      if (error) {
-        console.error('Error al verificar nombre de polideportivo:', error);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al verificar nombre de polideportivo' 
-        });
-      }
+    const { data: polideportivoConMismoNombre, error: nombreError } = await supabase
+      .from('polideportivos')
+      .select('id')
+      .eq('nombre', nombre)
+      .neq('id', id)
+      .single();
 
-      if (nombreResults.length > 0) {
-        return res.status(409).json({ 
-          success: false,
-          error: 'Ya existe otro polideportivo con ese nombre' 
-        });
-      }
-
-      // Actualizar polideportivo
-      conexion.query(
-        'UPDATE polideportivos SET nombre = ?, direccion = ?, telefono = ? WHERE id = ?',
-        [nombre.trim(), direccion.trim(), telefono ? telefono.trim() : null, id],
-        (error, updateResults) => {
-          if (error) {
-            console.error('Error al actualizar polideportivo:', error);
-            return res.status(500).json({ 
-              success: false,
-              error: 'Error al actualizar polideportivo' 
-            });
-          }
-
-          // Obtener polideportivo actualizado
-          conexion.query('SELECT * FROM polideportivos WHERE id = ?', [id], (error, polideportivoResults) => {
-            if (error || polideportivoResults.length === 0) {
-              console.error('Error al obtener polideportivo actualizado:', error);
-              return res.status(500).json({ 
-                success: false,
-                error: 'Error al obtener polideportivo actualizado' 
-              });
-            }
-
-            res.json({
-              success: true,
-              data: polideportivoResults[0]
-            });
-          });
-        }
-      );
-    });
-  });
-});
-
-// Eliminar polideportivo
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
-  const conexion = req.app.get('conexion');
-
-  // Verificar que el polideportivo existe
-  conexion.query('SELECT id FROM polideportivos WHERE id = ?', [id], (error, results) => {
-    if (error) {
-      console.error('Error al verificar polideportivo:', error);
-      return res.status(500).json({ 
+    if (polideportivoConMismoNombre) {
+      return res.status(409).json({ 
         success: false,
-        error: 'Error al verificar polideportivo' 
+        error: 'Ya existe otro polideportivo con ese nombre' 
       });
     }
 
-    if (results.length === 0) {
+    // Actualizar polideportivo
+    const { data: polideportivoActualizado, error: updateError } = await supabase
+      .from('polideportivos')
+      .update({
+        nombre: nombre.trim(),
+        direccion: direccion.trim(),
+        telefono: telefono ? telefono.trim() : null
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Error al actualizar polideportivo:', updateError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al actualizar polideportivo' 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: polideportivoActualizado
+    });
+
+  } catch (error) {
+    console.error('Error al actualizar polideportivo:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al actualizar polideportivo' 
+    });
+  }
+});
+
+// Eliminar polideportivo
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  const supabase = req.app.get('supabase');
+
+  try {
+    // Verificar que el polideportivo existe
+    const { data: polideportivo, error: checkError } = await supabase
+      .from('polideportivos')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !polideportivo) {
       return res.status(404).json({ 
         success: false,
         error: 'Polideportivo no encontrado' 
@@ -221,40 +230,52 @@ router.delete('/:id', (req, res) => {
     }
 
     // Verificar si hay pistas asociadas a este polideportivo
-    conexion.query('SELECT COUNT(*) as count FROM pistas WHERE polideportivo_id = ?', [id], (error, pistaResults) => {
-      if (error) {
-        console.error('Error al verificar pistas asociadas:', error);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al verificar pistas asociadas' 
-        });
-      }
+    const { data: pistas, error: pistasError } = await supabase
+      .from('pistas')
+      .select('id')
+      .eq('polideportivo_id', id);
 
-      const pistaCount = pistaResults[0].count;
-      if (pistaCount > 0) {
-        return res.status(409).json({ 
-          success: false,
-          error: `No se puede eliminar el polideportivo porque tiene ${pistaCount} pista(s) asociada(s). Elimine primero las pistas.` 
-        });
-      }
-
-      // Eliminar polideportivo
-      conexion.query('DELETE FROM polideportivos WHERE id = ?', [id], (error, deleteResults) => {
-        if (error) {
-          console.error('Error al eliminar polideportivo:', error);
-          return res.status(500).json({ 
-            success: false,
-            error: 'Error al eliminar polideportivo' 
-          });
-        }
-
-        res.json({ 
-          success: true,
-          message: 'Polideportivo eliminado correctamente' 
-        });
+    if (pistasError) {
+      console.error('Error al verificar pistas asociadas:', pistasError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al verificar pistas asociadas' 
       });
+    }
+
+    if (pistas && pistas.length > 0) {
+      return res.status(409).json({ 
+        success: false,
+        error: `No se puede eliminar el polideportivo porque tiene ${pistas.length} pista(s) asociada(s). Elimine primero las pistas.` 
+      });
+    }
+
+    // Eliminar polideportivo
+    const { error: deleteError } = await supabase
+      .from('polideportivos')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) {
+      console.error('Error al eliminar polideportivo:', deleteError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al eliminar polideportivo' 
+      });
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Polideportivo eliminado correctamente' 
     });
-  });
+
+  } catch (error) {
+    console.error('Error al eliminar polideportivo:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al eliminar polideportivo' 
+    });
+  }
 });
 
 module.exports = router;

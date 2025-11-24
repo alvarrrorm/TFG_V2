@@ -32,7 +32,7 @@ function validarTelefono(telefono) {
 }
 
 router.post('/', async (req, res) => {
-  const conexion = req.app.get('conexion');
+  const supabase = req.app.get('supabase');
   
   // Sanitizar y limpiar todos los datos de entrada
   const nombre = req.body.nombre ? req.body.nombre.toString().trim() : '';
@@ -81,70 +81,97 @@ router.post('/', async (req, res) => {
   const rol = clave_admin === CLAVE_ADMIN ? 'admin' : 'usuario';
 
   try {
-    // Verificar duplicados de manera más eficiente
-    const verificarDuplicados = () => {
-      return new Promise((resolve, reject) => {
-        const queries = [
-          { query: 'SELECT id FROM usuarios WHERE dni = ?', value: dni, field: 'DNI' },
-          { query: 'SELECT id FROM usuarios WHERE correo = ?', value: correo, field: 'correo' },
-          { query: 'SELECT id FROM usuarios WHERE usuario = ?', value: usuario, field: 'nombre de usuario' }
-        ];
+    // Verificar duplicados en Supabase
+    const verificarDuplicados = async () => {
+      const errors = [];
 
-        let completed = 0;
-        const errors = [];
+      // Verificar DNI duplicado
+      const { data: dniExistente, error: dniError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('dni', dni)
+        .limit(1);
 
-        queries.forEach(({ query, value, field }) => {
-          conexion.query(query, [value], (err, resultados) => {
-            if (err) {
-              console.error(`Error al comprobar ${field}:`, err);
-              errors.push(`Error al comprobar el ${field}`);
-            } else if (resultados.length > 0) {
-              errors.push(`El ${field} ya está registrado`);
-            }
+      if (dniError) {
+        console.error('Error al comprobar DNI:', dniError);
+        errors.push('Error al comprobar el DNI');
+      } else if (dniExistente && dniExistente.length > 0) {
+        errors.push('El DNI ya está registrado');
+      }
 
-            completed++;
-            if (completed === queries.length) {
-              if (errors.length > 0) {
-                reject(new Error(errors.join(', ')));
-              } else {
-                resolve();
-              }
-            }
-          });
-        });
-      });
+      // Verificar correo duplicado
+      const { data: correoExistente, error: correoError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('correo', correo)
+        .limit(1);
+
+      if (correoError) {
+        console.error('Error al comprobar correo:', correoError);
+        errors.push('Error al comprobar el correo');
+      } else if (correoExistente && correoExistente.length > 0) {
+        errors.push('El correo ya está registrado');
+      }
+
+      // Verificar usuario duplicado
+      const { data: usuarioExistente, error: usuarioError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('usuario', usuario)
+        .limit(1);
+
+      if (usuarioError) {
+        console.error('Error al comprobar usuario:', usuarioError);
+        errors.push('Error al comprobar el nombre de usuario');
+      } else if (usuarioExistente && usuarioExistente.length > 0) {
+        errors.push('El nombre de usuario ya está registrado');
+      }
+
+      if (errors.length > 0) {
+        throw new Error(errors.join(', '));
+      }
     };
 
     await verificarDuplicados();
 
     // Encriptar contraseña y registrar usuario
     const hashedPass = await bcrypt.hash(pass, 10);
-    const sql = 'INSERT INTO usuarios (nombre, correo, usuario, dni, pass, rol, telefono) VALUES (?, ?, ?, ?, ?, ?, ?)';
-    const valores = [nombre, correo, usuario, dni, hashedPass, rol, telefonoLimpio];
+    
+    const { data: nuevoUsuario, error: insertError } = await supabase
+      .from('usuarios')
+      .insert([{
+        nombre: nombre,
+        correo: correo,
+        usuario: usuario,
+        dni: dni,
+        pass: hashedPass,
+        rol: rol,
+        telefono: telefonoLimpio
+      }])
+      .select()
+      .single();
 
-    conexion.query(sql, valores, (err, result) => {
-      if (err) {
-        console.error('Error al registrar usuario:', err);
-        
-        // Manejar errores específicos de MySQL
-        if (err.code === 'ER_DUP_ENTRY') {
-          return res.status(400).json({ error: 'El usuario, correo o DNI ya está registrado' });
-        }
-        
-        return res.status(500).json({ error: 'Error al registrar el usuario en la base de datos' });
+    if (insertError) {
+      console.error('Error al registrar usuario:', insertError);
+      
+      // Manejar errores específicos de Supabase
+      if (insertError.code === '23505') { // Código de violación de unique constraint
+        return res.status(400).json({ error: 'El usuario, correo o DNI ya está registrado' });
       }
+      
+      return res.status(500).json({ error: 'Error al registrar el usuario en la base de datos' });
+    }
 
-      console.log('Usuario registrado exitosamente:', { id: result.insertId, usuario, rol });
-      res.json({ 
-        mensaje: `Usuario registrado correctamente como ${rol}`,
-        usuario: {
-          id: result.insertId,
-          nombre,
-          correo,
-          usuario,
-          rol
-        }
-      });
+    console.log('Usuario registrado exitosamente:', { id: nuevoUsuario.id, usuario, rol });
+    res.json({ 
+      mensaje: `Usuario registrado correctamente como ${rol}`,
+      usuario: {
+        id: nuevoUsuario.id,
+        nombre: nuevoUsuario.nombre,
+        correo: nuevoUsuario.correo,
+        usuario: nuevoUsuario.usuario,
+        rol: nuevoUsuario.rol
+      }
     });
 
   } catch (error) {

@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 
-// 👇 FUNCIÓN REUTILIZABLE PARA FORMATEAR FECHA PARA MYSQL
-const formatearFechaParaMySQL = (fechaInput) => {
+// 👇 FUNCIÓN REUTILIZABLE PARA FORMATEAR FECHA
+const formatearFecha = (fechaInput) => {
   if (!fechaInput) return null;
   
   console.log('🔄 Formateando fecha recibida:', fechaInput, 'Tipo:', typeof fechaInput);
@@ -84,8 +84,8 @@ const validarHora = (hora) => {
 };
 
 // Crear una reserva
-router.post('/', (req, res) => {
-  const db = req.app.get('conexion');
+router.post('/', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const {
     dni_usuario,
     nombre_usuario,
@@ -116,295 +116,272 @@ router.post('/', (req, res) => {
     return res.status(400).json({ success: false, error: 'ID de pista inválido' });
   }
 
-  // Formatear fecha para MySQL
-  const fechaFormateada = formatearFechaParaMySQL(fecha);
+  // Formatear fecha
+  const fechaFormateada = formatearFecha(fecha);
   if (!fechaFormateada) {
     return res.status(400).json({ success: false, error: 'Fecha inválida' });
   }
 
-  console.log('📅 Fecha formateada para MySQL:', fechaFormateada);
+  console.log('📅 Fecha formateada:', fechaFormateada);
 
-  // Primero obtener información de la pista y su polideportivo
-  const pistaSQL = `
-    SELECT p.*, poli.id as polideportivo_id 
-    FROM pistas p 
-    LEFT JOIN polideportivos poli ON p.polideportivo_id = poli.id 
-    WHERE p.id = ? AND p.disponible = 1
-  `;
+  try {
+    // Primero obtener información de la pista y su polideportivo
+    const { data: pistas, error: pistaError } = await supabase
+      .from('pistas')
+      .select(`
+        *,
+        polideportivos!inner(id)
+      `)
+      .eq('id', pistaId)
+      .eq('disponible', true)
+      .single();
 
-  db.query(pistaSQL, [pistaId], (err, pistaResults) => {
-    if (err) {
-      console.error('❌ Error al obtener información de la pista:', err);
-      return res.status(500).json({ success: false, error: 'Error al obtener información de la pista' });
-    }
-
-    if (pistaResults.length === 0) {
+    if (pistaError || !pistas) {
+      console.error('❌ Error al obtener información de la pista:', pistaError);
       return res.status(404).json({ success: false, error: 'Pista no encontrada o no disponible' });
     }
 
-    const pista = pistaResults[0];
-    const polideportivoId = pista.polideportivo_id;
-
-    console.log('📍 Pista seleccionada:', pista.nombre, 'Polideportivo:', polideportivoId);
+    const polideportivoId = pistas.polideportivo_id;
+    console.log('📍 Pista seleccionada:', pistas.nombre, 'Polideportivo:', polideportivoId);
 
     // 👇 OBTENER EL USUARIO_ID REAL BASADO EN EL NOMBRE_USUARIO
-    const usuarioSQL = `SELECT id, correo, nombre FROM usuarios WHERE nombre = ? OR usuario = ?`;
+    const { data: usuarios, error: usuarioError } = await supabase
+      .from('usuarios')
+      .select('id, correo, nombre')
+      .or(`nombre.eq.${nombre_usuario},usuario.eq.${nombre_usuario}`)
+      .limit(1);
+
+    if (usuarioError) {
+      console.error('❌ Error al obtener información del usuario:', usuarioError);
+      return res.status(500).json({ success: false, error: 'Error al obtener información del usuario' });
+    }
+
+    let usuarioId = 0;
+    let usuarioEmail = '';
+    let nombreUsuarioReal = nombre_usuario;
+
+    if (usuarios && usuarios.length > 0) {
+      usuarioId = usuarios[0].id;
+      usuarioEmail = usuarios[0].correo;
+      nombreUsuarioReal = usuarios[0].nombre || nombre_usuario;
+      console.log('👤 Usuario encontrado - ID:', usuarioId, 'Email:', usuarioEmail, 'Nombre:', nombreUsuarioReal);
+    } else {
+      console.log('⚠️  Usuario no encontrado, usando ID temporal 0');
+      console.log('💡 Buscando usuario con nombre:', nombre_usuario);
+    }
+
+    // Comprobar disponibilidad de la pista
+    const { data: reservasConflictivas, error: disponibilidadError } = await supabase
+      .from('reservas')
+      .select('id')
+      .eq('pista_id', pistaId)
+      .eq('fecha', fechaFormateada)
+      .neq('estado', 'cancelada')
+      .or(`and(hora_inicio.lt.${hora_fin},hora_fin.gt.${hora_inicio}),and(hora_inicio.gte.${hora_inicio},hora_inicio.lt.${hora_fin}),and(hora_fin.gt.${hora_inicio},hora_fin.lte.${hora_fin})`);
+
+    if (disponibilidadError) {
+      console.error('❌ Error al comprobar disponibilidad:', disponibilidadError);
+      return res.status(500).json({ success: false, error: 'Error al comprobar disponibilidad' });
+    }
     
-    db.query(usuarioSQL, [nombre_usuario, nombre_usuario], (err, usuarioResults) => {
-      if (err) {
-        console.error('❌ Error al obtener información del usuario:', err);
-        return res.status(500).json({ success: false, error: 'Error al obtener información del usuario' });
+    if (reservasConflictivas && reservasConflictivas.length > 0) {
+      console.log('🚫 Pista no disponible - Conflictos encontrados:', reservasConflictivas.length);
+      return res.status(409).json({ success: false, error: 'La pista no está disponible en el horario seleccionado' });
+    }
+
+    // Comprobar que el usuario no tenga otra reserva en ese horario
+    const { data: reservasUsuario, error: usuarioReservaError } = await supabase
+      .from('reservas')
+      .select('id')
+      .eq('nombre_usuario', nombre_usuario)
+      .eq('fecha', fechaFormateada)
+      .neq('estado', 'cancelada')
+      .or(`and(hora_inicio.lt.${hora_fin},hora_fin.gt.${hora_inicio}),and(hora_inicio.gte.${hora_inicio},hora_inicio.lt.${hora_fin}),and(hora_fin.gt.${hora_inicio},hora_fin.lte.${hora_fin})`);
+
+    if (usuarioReservaError) {
+      console.error('❌ Error al comprobar reservas del usuario:', usuarioReservaError);
+      return res.status(500).json({ success: false, error: 'Error al comprobar reservas del usuario' });
+    }
+    
+    if (reservasUsuario && reservasUsuario.length > 0) {
+      console.log('🚫 Usuario ya tiene reserva en ese horario');
+      return res.status(409).json({ success: false, error: 'Ya tienes otra reserva en este horario' });
+    }
+
+    // Calcular precio si no se envió
+    let precioFinal = precio;
+    if (precio === undefined) {
+      const precioHora = parseFloat(pistas.precio);
+      if (isNaN(precioHora)) {
+        return res.status(500).json({ success: false, error: 'Precio de la pista inválido' });
       }
 
-      let usuarioId = 0;
-      let usuarioEmail = '';
-      let nombreUsuarioReal = nombre_usuario;
-
-      if (usuarioResults.length > 0) {
-        usuarioId = usuarioResults[0].id;
-        usuarioEmail = usuarioResults[0].correo;
-        nombreUsuarioReal = usuarioResults[0].nombre || nombre_usuario;
-        console.log('👤 Usuario encontrado - ID:', usuarioId, 'Email:', usuarioEmail, 'Nombre:', nombreUsuarioReal);
-      } else {
-        console.log('⚠️  Usuario no encontrado, usando ID temporal 0');
-        console.log('💡 Buscando usuario con nombre:', nombre_usuario);
+      // Calcular duración en horas
+      const [hInicio, mInicio] = hora_inicio.split(':').map(Number);
+      const [hFin, mFin] = hora_fin.split(':').map(Number);
+      const duracion = ((hFin * 60 + mFin) - (hInicio * 60 + mInicio)) / 60;
+      
+      if (duracion <= 0) {
+        return res.status(400).json({ success: false, error: 'La hora de fin debe ser posterior a la hora de inicio' });
       }
 
-      // Comprobar disponibilidad de la pista
-      const disponibilidadSQL = `
-        SELECT * FROM reservas 
-        WHERE pista_id = ? AND fecha = ? AND estado != 'cancelada' AND (
-          (hora_inicio < ? AND hora_fin > ?) OR
-          (hora_inicio >= ? AND hora_inicio < ?) OR
-          (hora_fin > ? AND hora_fin <= ?)
-        )
-      `;
+      precioFinal = parseFloat((precioHora * duracion).toFixed(2));
 
-      db.query(disponibilidadSQL, [
-        pistaId, fechaFormateada, 
-        hora_fin, hora_inicio, 
-        hora_inicio, hora_fin, 
-        hora_inicio, hora_fin
-      ], (err, results) => {
-        if (err) {
-          console.error('❌ Error al comprobar disponibilidad:', err);
-          return res.status(500).json({ success: false, error: 'Error al comprobar disponibilidad' });
-        }
-        
-        if (results.length > 0) {
-          console.log('🚫 Pista no disponible - Conflictos encontrados:', results);
-          return res.status(409).json({ success: false, error: 'La pista no está disponible en el horario seleccionado' });
-        }
+      // Añadir suplemento de ludoteca
+      if (ludoteca) {
+        precioFinal += 5;
+      }
+    }
 
-        // Comprobar que el usuario no tenga otra reserva en ese horario
-        const usuarioReservaSQL = `
-          SELECT * FROM reservas 
-          WHERE nombre_usuario = ? AND fecha = ? AND estado != 'cancelada' AND (
-            (hora_inicio < ? AND hora_fin > ?) OR
-            (hora_inicio >= ? AND hora_inicio < ?) OR
-            (hora_fin > ? AND hora_fin <= ?)
-          )
-        `;
-        
-        db.query(usuarioReservaSQL, [
-          nombre_usuario, fechaFormateada,
-          hora_fin, hora_inicio,
-          hora_inicio, hora_fin,
-          hora_inicio, hora_fin
-        ], (err, results) => {
-          if (err) {
-            console.error('❌ Error al comprobar reservas del usuario:', err);
-            return res.status(500).json({ success: false, error: 'Error al comprobar reservas del usuario' });
-          }
-          
-          if (results.length > 0) {
-            console.log('🚫 Usuario ya tiene reserva en ese horario');
-            return res.status(409).json({ success: false, error: 'Ya tienes otra reserva en este horario' });
-          }
+    console.log('💰 Precio calculado:', precioFinal);
 
-          // Calcular precio si no se envió
-          let precioFinal = precio;
-          if (precio === undefined) {
-            const precioHora = parseFloat(pista.precio);
-            if (isNaN(precioHora)) {
-              return res.status(500).json({ success: false, error: 'Precio de la pista inválido' });
-            }
+    // 👇 INSERTAR RESERVA CON USUARIO_ID REAL
+    const { data: nuevaReserva, error: insertError } = await supabase
+      .from('reservas')
+      .insert([{
+        pista_id: pistaId,
+        polideportivo_id: polideportivoId,
+        usuario_id: usuarioId,
+        nombre_usuario: nombreUsuarioReal,
+        fecha: fechaFormateada,
+        hora_inicio: hora_inicio,
+        hora_fin: hora_fin,
+        precio: precioFinal,
+        estado: estado
+      }])
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .single();
 
-            // Calcular duración en horas
-            const [hInicio, mInicio] = hora_inicio.split(':').map(Number);
-            const [hFin, mFin] = hora_fin.split(':').map(Number);
-            const duracion = ((hFin * 60 + mFin) - (hInicio * 60 + mInicio)) / 60;
-            
-            if (duracion <= 0) {
-              return res.status(400).json({ success: false, error: 'La hora de fin debe ser posterior a la hora de inicio' });
-            }
+    if (insertError) {
+      console.error('❌ Error al crear reserva:', insertError);
+      return res.status(500).json({ success: false, error: 'Error al crear reserva' });
+    }
 
-            precioFinal = parseFloat((precioHora * duracion).toFixed(2));
+    console.log('✅ Reserva creada con ID:', nuevaReserva.id);
 
-            // Añadir suplemento de ludoteca
-            if (ludoteca) {
-              precioFinal += 5;
-            }
-          }
+    const reservaConLudoteca = {
+      ...nuevaReserva,
+      ludoteca: ludoteca,
+      email: usuarioEmail,
+      pistaNombre: nuevaReserva.pistas?.nombre,
+      pistaTipo: nuevaReserva.pistas?.tipo,
+      polideportivo_nombre: nuevaReserva.polideportivos?.nombre
+    };
 
-          console.log('💰 Precio calculado:', precioFinal);
-
-          // 👇 INSERTAR RESERVA CON USUARIO_ID REAL
-          const insertSQL = `
-            INSERT INTO reservas 
-            (pista_id, polideportivo_id, usuario_id, nombre_usuario, fecha, hora_inicio, hora_fin, precio, estado)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `;
-          
-          db.query(insertSQL, [
-            pistaId, 
-            polideportivoId, 
-            usuarioId, // 👈 Ahora usa el usuario_id real (o 0 si no se encontró)
-            nombreUsuarioReal, // 👈 Usar el nombre real del usuario
-            fechaFormateada,
-            hora_inicio, 
-            hora_fin, 
-            precioFinal,
-            estado
-          ], (err, result) => {
-            if (err) {
-              console.error('❌ Error al crear reserva:', err);
-              console.error('Detalles del error:', err.sqlMessage);
-              return res.status(500).json({ success: false, error: 'Error al crear reserva' });
-            }
-
-            console.log('✅ Reserva creada con ID:', result.insertId);
-
-            // Devolver reserva creada con información completa
-            const selectSQL = `
-              SELECT r.*, 
-                     p.nombre AS pistaNombre, 
-                     p.tipo AS pistaTipo,
-                     poli.nombre AS polideportivo_nombre
-              FROM reservas r
-              LEFT JOIN pistas p ON r.pista_id = p.id
-              LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-              WHERE r.id = ?
-            `;
-            
-            db.query(selectSQL, [result.insertId], (err, rows) => {
-              if (err) {
-                console.error('❌ Error al obtener reserva creada:', err);
-                return res.status(500).json({ success: false, error: 'Error al obtener reserva creada' });
-              }
-              
-              if (rows.length === 0) {
-                return res.status(404).json({ success: false, error: 'Reserva no encontrada después de crearla' });
-              }
-
-              const reservaConLudoteca = {
-                ...rows[0],
-                ludoteca: ludoteca,
-                email: usuarioEmail // 👈 Incluir email para uso futuro
-              };
-
-              console.log('🎉 Reserva creada exitosamente');
-              console.log('📊 Datos reserva:', {
-                id: rows[0].id,
-                usuario_id: rows[0].usuario_id,
-                nombre_usuario: rows[0].nombre_usuario,
-                email_disponible: !!usuarioEmail
-              });
-
-              res.status(201).json({ success: true, data: reservaConLudoteca });
-            });
-          });
-        });
-      });
+    console.log('🎉 Reserva creada exitosamente');
+    console.log('📊 Datos reserva:', {
+      id: nuevaReserva.id,
+      usuario_id: nuevaReserva.usuario_id,
+      nombre_usuario: nuevaReserva.nombre_usuario,
+      email_disponible: !!usuarioEmail
     });
-  });
+
+    res.status(201).json({ success: true, data: reservaConLudoteca });
+
+  } catch (error) {
+    console.error('❌ Error general al crear reserva:', error);
+    return res.status(500).json({ success: false, error: 'Error interno del servidor' });
+  }
 });
 
 // Listar todas las reservas o por nombre de usuario
-router.get('/', (req, res) => {
-  const db = req.app.get('conexion');
+router.get('/', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { nombre_usuario } = req.query;
 
   console.log('📋 Obteniendo reservas para usuario:', nombre_usuario);
 
-  let sql = `
-    SELECT r.*, 
-           p.nombre AS pistaNombre, 
-           p.tipo AS pistaTipo,
-           poli.nombre AS polideportivo_nombre
-    FROM reservas r
-    LEFT JOIN pistas p ON r.pista_id = p.id
-    LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-  `;
-  const params = [];
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
 
-  if (nombre_usuario) {
-    sql += ` WHERE r.nombre_usuario = ?`;
-    params.push(nombre_usuario);
-  }
+    if (nombre_usuario) {
+      query = query.eq('nombre_usuario', nombre_usuario);
+    }
 
-  sql += ` ORDER BY r.fecha DESC, r.hora_inicio DESC`;
+    const { data: reservas, error } = await query;
 
-  db.query(sql, params, (err, results) => {
-    if (err) {
-      console.error('❌ Error al obtener reservas:', err);
+    if (error) {
+      console.error('❌ Error al obtener reservas:', error);
       return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
     }
     
-    console.log(`📊 Se encontraron ${results.length} reservas`);
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
     
-    const reservasConLudoteca = results.map(reserva => ({
+    const reservasConLudoteca = (reservas || []).map(reserva => ({
       ...reserva,
-      ludoteca: false
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
     }));
 
     res.json({ success: true, data: reservasConLudoteca });
-  });
+  } catch (error) {
+    console.error('❌ Error al obtener reservas:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+  }
 });
 
 // Obtener reserva por ID
-router.get('/:id', (req, res) => {
-  const db = req.app.get('conexion');
+router.get('/:id', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { id } = req.params;
 
   console.log('🔍 Obteniendo reserva con ID:', id);
 
-  const sql = `
-    SELECT r.*, 
-           p.nombre AS pistaNombre, 
-           p.tipo AS pistaTipo,
-           poli.nombre AS polideportivo_nombre
-    FROM reservas r
-    LEFT JOIN pistas p ON r.pista_id = p.id
-    LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-    WHERE r.id = ?
-  `;
+  try {
+    const { data: reserva, error } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id)
+      .single();
 
-  db.query(sql, [id], (err, results) => {
-    if (err) {
-      console.error('❌ Error al obtener reserva:', err);
+    if (error) {
+      console.error('❌ Error al obtener reserva:', error);
       return res.status(500).json({ success: false, error: 'Error al obtener reserva' });
     }
     
-    if (results.length === 0) {
+    if (!reserva) {
       console.log('❌ Reserva no encontrada ID:', id);
       return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
     }
 
-    console.log('✅ Reserva encontrada:', results[0].id);
+    console.log('✅ Reserva encontrada:', reserva.id);
 
     const reservaConLudoteca = {
-      ...results[0],
-      ludoteca: false
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
     };
 
     res.json({ success: true, data: reservaConLudoteca });
-  });
+  } catch (error) {
+    console.error('❌ Error al obtener reserva:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener reserva' });
+  }
 });
 
 // Obtener disponibilidad
-router.get('/disponibilidad', (req, res) => {
-  const db = req.app.get('conexion');
+router.get('/disponibilidad', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { fecha, polideportivo } = req.query;
 
   console.log('📅 Consultando disponibilidad - Fecha:', fecha, 'Polideportivo:', polideportivo);
@@ -413,94 +390,106 @@ router.get('/disponibilidad', (req, res) => {
     return res.status(400).json({ success: false, error: 'Fecha y polideportivo son requeridos' });
   }
 
-  // Formatear fecha para MySQL
-  const fechaFormateada = formatearFechaParaMySQL(fecha);
+  // Formatear fecha
+  const fechaFormateada = formatearFecha(fecha);
   if (!fechaFormateada) {
     return res.status(400).json({ success: false, error: 'Fecha inválida' });
   }
 
   console.log('📅 Fecha formateada para consulta:', fechaFormateada);
 
-  const sql = `
-    SELECT r.*, 
-           p.nombre AS pistaNombre, 
-           p.tipo AS pistaTipo,
-           poli.nombre AS polideportivo_nombre
-    FROM reservas r
-    LEFT JOIN pistas p ON r.pista_id = p.id
-    LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-    WHERE r.fecha = ? 
-      AND r.polideportivo_id = ?
-      AND r.estado != 'cancelada'
-    ORDER BY r.hora_inicio
-  `;
+  try {
+    const { data: reservas, error } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('fecha', fechaFormateada)
+      .eq('polideportivo_id', polideportivo)
+      .neq('estado', 'cancelada')
+      .order('hora_inicio');
 
-  db.query(sql, [fechaFormateada, polideportivo], (err, results) => {
-    if (err) {
-      console.error('❌ Error al obtener disponibilidad:', err);
+    if (error) {
+      console.error('❌ Error al obtener disponibilidad:', error);
       return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
     }
     
-    console.log(`📊 Se encontraron ${results.length} reservas activas para la fecha`);
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas activas para la fecha`);
     
-    res.json({ success: true, data: results });
-  });
+    const reservasFormateadas = (reservas || []).map(reserva => ({
+      ...reserva,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    }));
+
+    res.json({ success: true, data: reservasFormateadas });
+  } catch (error) {
+    console.error('❌ Error al obtener disponibilidad:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
+  }
 });
 
 // Eliminar una reserva
-router.delete('/:id', (req, res) => {
-  const db = req.app.get('conexion');
+router.delete('/:id', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { id } = req.params;
 
   console.log('🗑️ Eliminando reserva ID:', id);
 
-  const selectSQL = `
-    SELECT r.*, 
-           p.nombre AS pistaNombre,
-           poli.nombre AS polideportivo_nombre
-    FROM reservas r
-    LEFT JOIN pistas p ON r.pista_id = p.id
-    LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-    WHERE r.id = ?
-  `;
-  
-  db.query(selectSQL, [id], (err, rows) => {
-    if (err) {
-      console.error('❌ Error al obtener reserva:', err);
-      return res.status(500).json({ success: false, error: 'Error al obtener reserva' });
-    }
-    
-    if (rows.length === 0) {
+  try {
+    // Primero obtener la reserva
+    const { data: reserva, error: selectError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (selectError || !reserva) {
       console.log('❌ Reserva no encontrada para eliminar ID:', id);
       return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
     }
 
-    const deleteSQL = `DELETE FROM reservas WHERE id = ?`;
-    db.query(deleteSQL, [id], (err, result) => {
-      if (err) {
-        console.error('❌ Error al eliminar reserva:', err);
-        return res.status(500).json({ success: false, error: 'Error al eliminar reserva' });
-      }
-      
-      console.log('✅ Reserva eliminada correctamente ID:', id);
-      
-      const reservaConLudoteca = {
-        ...rows[0],
-        ludoteca: false
-      };
+    // Eliminar la reserva
+    const { error: deleteError } = await supabase
+      .from('reservas')
+      .delete()
+      .eq('id', id);
 
-      res.json({ 
-        success: true, 
-        data: reservaConLudoteca, 
-        message: 'Reserva eliminada correctamente' 
-      });
+    if (deleteError) {
+      console.error('❌ Error al eliminar reserva:', deleteError);
+      return res.status(500).json({ success: false, error: 'Error al eliminar reserva' });
+    }
+    
+    console.log('✅ Reserva eliminada correctamente ID:', id);
+    
+    const reservaConLudoteca = {
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    };
+
+    res.json({ 
+      success: true, 
+      data: reservaConLudoteca, 
+      message: 'Reserva eliminada correctamente' 
     });
-  });
+  } catch (error) {
+    console.error('❌ Error al eliminar reserva:', error);
+    return res.status(500).json({ success: false, error: 'Error al eliminar reserva' });
+  }
 });
 
 // 👇 RUTA COMPLETAMENTE CORREGIDA PARA CONFIRMAR RESERVA Y ENVIAR EMAIL
-router.put('/:id/confirmar', (req, res) => {
-  const db = req.app.get('conexion');
+router.put('/:id/confirmar', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const enviarEmailConfirmacion = req.app.get('enviarEmailConfirmacion');
   const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
   const { id } = req.params;
@@ -513,203 +502,177 @@ router.put('/:id/confirmar', (req, res) => {
 
   const reservaId = parseInt(id);
 
-  // 1. Primero actualizamos el estado de la reserva
-  const updateSQL = `UPDATE reservas SET estado = 'confirmada' WHERE id = ? AND estado = 'pendiente'`;
-  
-  db.query(updateSQL, [reservaId], (error, result) => {
-    if (error) {
-      console.error('❌ Error actualizando reserva:', error);
+  try {
+    // 1. Primero actualizamos el estado de la reserva
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ estado: 'confirmada' })
+      .eq('id', reservaId)
+      .eq('estado', 'pendiente');
+
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
       return res.status(500).json({ 
         success: false, 
         error: 'Error interno del servidor' 
-      });
-    }
-
-    if (result.affectedRows === 0) {
-      console.log('❌ Reserva no encontrada o ya confirmada ID:', reservaId);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Reserva no encontrada o ya no está pendiente' 
       });
     }
 
     // 2. Obtenemos los datos COMPLETOS de la reserva
-    const query = `
-      SELECT 
-        r.*,
-        p.nombre as polideportivo_nombre,
-        ps.nombre as pista_nombre
-      FROM reservas r
-      JOIN polideportivos p ON r.polideportivo_id = p.id
-      JOIN pistas ps ON r.pista_id = ps.id
-      WHERE r.id = ?
-    `;
+    const { data: reservas, error: queryError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', reservaId)
+      .single();
 
-    db.query(query, [reservaId], async (error, resultados) => {
-      if (error) {
-        console.error('❌ Error obteniendo datos de reserva:', error);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error interno del servidor' 
-        });
-      }
-
-      if (resultados.length === 0) {
-        return res.status(404).json({ 
-          success: false, 
-          error: 'Reserva no encontrada' 
-        });
-      }
-
-      const reservaCompleta = resultados[0];
-
-      console.log('👤 Datos obtenidos para el email:');
-      console.log('   Usuario ID:', reservaCompleta.usuario_id);
-      console.log('   Nombre Usuario:', reservaCompleta.nombre_usuario);
-      console.log('   Polideportivo:', reservaCompleta.polideportivo_nombre);
-      console.log('   Pista:', reservaCompleta.pista_nombre);
-      console.log('   Fecha:', reservaCompleta.fecha);
-      console.log('   Horario:', reservaCompleta.hora_inicio, '-', reservaCompleta.hora_fin);
-      console.log('   Precio:', reservaCompleta.precio);
-
-      // 👇 OBTENER EL EMAIL DEL USUARIO DESDE LA BASE DE DATOS
-      try {
-        const usuario = await obtenerEmailUsuario(reservaCompleta.usuario_id, db);
-        
-        if (usuario && usuario.correo) {
-          const reservaConEmail = {
-            ...reservaCompleta,
-            email: usuario.correo,
-            nombre_usuario: usuario.nombre || reservaCompleta.nombre_usuario
-          };
-
-          console.log('📧 Email del usuario obtenido:', usuario.correo);
-
-          // Enviar email
-          try {
-            await enviarEmailConfirmacion(reservaConEmail);
-            console.log('✅ Email enviado exitosamente');
-            
-            // Respuesta de éxito con email
-            obtenerReservaActualizada((reservaActualizada) => {
-              res.json({
-                success: true,
-                message: 'Reserva confirmada y email de confirmación enviado correctamente',
-                data: reservaActualizada
-              });
-            });
-            
-          } catch (emailError) {
-            console.error('⚠️  Reserva confirmada pero error enviando email:', emailError);
-            // Respuesta de éxito con error de email
-            obtenerReservaActualizada((reservaActualizada) => {
-              res.json({
-                success: true,
-                message: 'Reserva confirmada correctamente',
-                data: reservaActualizada,
-                warning: 'No se pudo enviar el email de confirmación - error en el servicio de email'
-              });
-            });
-          }
-          
-        } else {
-          console.log('⚠️  Usuario no tiene email registrado o no se encontró');
-          console.log('💡 Usuario ID en reserva:', reservaCompleta.usuario_id);
-          // Respuesta de éxito sin email
-          obtenerReservaActualizada((reservaActualizada) => {
-            res.json({
-              success: true,
-              message: 'Reserva confirmada correctamente',
-              data: reservaActualizada,
-              warning: 'No se pudo enviar el email de confirmación - usuario no encontrado en el sistema'
-            });
-          });
-        }
-      } catch (error) {
-        console.error('❌ Error obteniendo email del usuario:', error);
-        // Respuesta de éxito con error
-        obtenerReservaActualizada((reservaActualizada) => {
-          res.json({
-            success: true,
-            message: 'Reserva confirmada correctamente',
-            data: reservaActualizada,
-            warning: 'No se pudo enviar el email de confirmación - error al obtener información del usuario'
-          });
-        });
-      }
-
-      // Función auxiliar para obtener reserva actualizada
-      function obtenerReservaActualizada(callback) {
-        const selectSQL = `
-          SELECT r.*, 
-                 p.nombre AS pistaNombre, 
-                 p.tipo AS pistaTipo,
-                 poli.nombre AS polideportivo_nombre
-          FROM reservas r
-          LEFT JOIN pistas p ON r.pista_id = p.id
-          LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-          WHERE r.id = ?
-        `;
-        
-        db.query(selectSQL, [reservaId], (err, rows) => {
-          if (err) {
-            console.error('❌ Error al obtener reserva actualizada:', err);
-            return res.status(500).json({ 
-              success: false, 
-              error: 'Error al obtener reserva actualizada' 
-            });
-          }
-          
-          const reservaConLudoteca = {
-            ...rows[0],
-            ludoteca: false
-          };
-
-          callback(reservaConLudoteca);
-        });
-      }
-    });
-  });
-});
-
-// 👇 RUTA CORREGIDA PARA REENVIAR EMAIL DE CONFIRMACIÓN
-router.post('/:id/reenviar-email', (req, res) => {
-  const db = req.app.get('conexion');
-  const enviarEmailConfirmacion = req.app.get('enviarEmailConfirmacion');
-  const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
-  const { id } = req.params;
-
-  console.log(`📧 Reenviando email para reserva ID: ${id}`);
-
-  // Obtener datos básicos de la reserva
-  const query = `
-    SELECT 
-      r.*,
-      p.nombre as polideportivo_nombre,
-      ps.nombre as pista_nombre
-    FROM reservas r
-    JOIN polideportivos p ON r.polideportivo_id = p.id
-    JOIN pistas ps ON r.pista_id = ps.id
-    WHERE r.id = ?
-  `;
-
-  db.query(query, [id], async (error, resultados) => {
-    if (error) {
-      console.error('❌ Error obteniendo datos de reserva:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
-      });
-    }
-
-    if (resultados.length === 0) {
+    if (queryError || !reservas) {
+      console.error('❌ Error obteniendo datos de reserva:', queryError);
       return res.status(404).json({ 
         success: false, 
         error: 'Reserva no encontrada' 
       });
     }
 
-    const reserva = resultados[0];
+    const reservaCompleta = reservas;
+
+    console.log('👤 Datos obtenidos para el email:');
+    console.log('   Usuario ID:', reservaCompleta.usuario_id);
+    console.log('   Nombre Usuario:', reservaCompleta.nombre_usuario);
+    console.log('   Polideportivo:', reservaCompleta.polideportivos?.nombre);
+    console.log('   Pista:', reservaCompleta.pistas?.nombre);
+    console.log('   Fecha:', reservaCompleta.fecha);
+    console.log('   Horario:', reservaCompleta.hora_inicio, '-', reservaCompleta.hora_fin);
+    console.log('   Precio:', reservaCompleta.precio);
+
+    // 👇 OBTENER EL EMAIL DEL USUARIO DESDE LA BASE DE DATOS
+    try {
+      const usuario = await obtenerEmailUsuario(reservaCompleta.usuario_id);
+      
+      if (usuario && usuario.correo) {
+        const reservaConEmail = {
+          ...reservaCompleta,
+          email: usuario.correo,
+          nombre_usuario: usuario.nombre || reservaCompleta.nombre_usuario,
+          polideportivo_nombre: reservaCompleta.polideportivos?.nombre,
+          pista_nombre: reservaCompleta.pistas?.nombre
+        };
+
+        console.log('📧 Email del usuario obtenido:', usuario.correo);
+
+        // Enviar email
+        try {
+          await enviarEmailConfirmacion(reservaConEmail);
+          console.log('✅ Email enviado exitosamente');
+          
+          // Respuesta de éxito con email
+          const reservaActualizada = {
+            ...reservaCompleta,
+            ludoteca: false,
+            pistaNombre: reservaCompleta.pistas?.nombre,
+            polideportivo_nombre: reservaCompleta.polideportivos?.nombre
+          };
+
+          res.json({
+            success: true,
+            message: 'Reserva confirmada y email de confirmación enviado correctamente',
+            data: reservaActualizada
+          });
+          
+        } catch (emailError) {
+          console.error('⚠️  Reserva confirmada pero error enviando email:', emailError);
+          // Respuesta de éxito con error de email
+          const reservaActualizada = {
+            ...reservaCompleta,
+            ludoteca: false,
+            pistaNombre: reservaCompleta.pistas?.nombre,
+            polideportivo_nombre: reservaCompleta.polideportivos?.nombre
+          };
+
+          res.json({
+            success: true,
+            message: 'Reserva confirmada correctamente',
+            data: reservaActualizada,
+            warning: 'No se pudo enviar el email de confirmación - error en el servicio de email'
+          });
+        }
+        
+      } else {
+        console.log('⚠️  Usuario no tiene email registrado o no se encontró');
+        console.log('💡 Usuario ID en reserva:', reservaCompleta.usuario_id);
+        // Respuesta de éxito sin email
+        const reservaActualizada = {
+          ...reservaCompleta,
+          ludoteca: false,
+          pistaNombre: reservaCompleta.pistas?.nombre,
+          polideportivo_nombre: reservaCompleta.polideportivos?.nombre
+        };
+
+        res.json({
+          success: true,
+          message: 'Reserva confirmada correctamente',
+          data: reservaActualizada,
+          warning: 'No se pudo enviar el email de confirmación - usuario no encontrado en el sistema'
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error obteniendo email del usuario:', error);
+      // Respuesta de éxito con error
+      const reservaActualizada = {
+        ...reservaCompleta,
+        ludoteca: false,
+        pistaNombre: reservaCompleta.pistas?.nombre,
+        polideportivo_nombre: reservaCompleta.polideportivos?.nombre
+      };
+
+      res.json({
+        success: true,
+        message: 'Reserva confirmada correctamente',
+        data: reservaActualizada,
+        warning: 'No se pudo enviar el email de confirmación - error al obtener información del usuario'
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error en confirmar reserva:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// 👇 RUTA CORREGIDA PARA REENVIAR EMAIL DE CONFIRMACIÓN
+router.post('/:id/reenviar-email', async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const enviarEmailConfirmacion = req.app.get('enviarEmailConfirmacion');
+  const obtenerEmailUsuario = req.app.get('obtenerEmailUsuario');
+  const { id } = req.params;
+
+  console.log(`📧 Reenviando email para reserva ID: ${id}`);
+
+  try {
+    // Obtener datos básicos de la reserva
+    const { data: reserva, error: queryError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (queryError || !reserva) {
+      console.error('❌ Error obteniendo datos de reserva:', queryError);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada' 
+      });
+    }
 
     // Verificar que la reserva esté confirmada
     if (reserva.estado !== 'confirmada') {
@@ -721,7 +684,7 @@ router.post('/:id/reenviar-email', (req, res) => {
 
     // Obtener email del usuario
     try {
-      const usuario = await obtenerEmailUsuario(reserva.usuario_id, db);
+      const usuario = await obtenerEmailUsuario(reserva.usuario_id);
       
       if (!usuario || !usuario.correo) {
         return res.status(400).json({ 
@@ -733,7 +696,9 @@ router.post('/:id/reenviar-email', (req, res) => {
       const reservaConEmail = {
         ...reserva,
         email: usuario.correo,
-        nombre_usuario: usuario.nombre || reserva.nombre_usuario
+        nombre_usuario: usuario.nombre || reserva.nombre_usuario,
+        polideportivo_nombre: reserva.polideportivos?.nombre,
+        pista_nombre: reserva.pistas?.nombre
       };
 
       console.log('📧 Reenviando email a:', usuario.correo);
@@ -764,65 +729,74 @@ router.post('/:id/reenviar-email', (req, res) => {
         error: 'Error obteniendo información del usuario' 
       });
     }
-  });
+  } catch (error) {
+    console.error('❌ Error en reenviar-email:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
 });
 
 // Cancelar reserva
-router.put('/:id/cancelar', (req, res) => {
-  const db = req.app.get('conexion');
+router.put('/:id/cancelar', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { id } = req.params;
 
   console.log('❌ Cancelando reserva ID:', id);
 
-  const sql = `UPDATE reservas SET estado = 'cancelada' WHERE id = ? AND estado = 'pendiente'`;
-  
-  db.query(sql, [id], (err, result) => {
-    if (err) {
-      console.error('❌ Error al cancelar reserva:', err);
+  try {
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ estado: 'cancelada' })
+      .eq('id', id)
+      .eq('estado', 'pendiente');
+
+    if (updateError) {
+      console.error('❌ Error al cancelar reserva:', updateError);
       return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
     }
 
-    if (result.affectedRows === 0) {
-      console.log('❌ Reserva no encontrada o ya no está pendiente ID:', id);
-      return res.status(404).json({ success: false, error: 'Reserva no encontrada o ya no está pendiente' });
+    // Obtener reserva actualizada
+    const { data: reserva, error: selectError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (selectError || !reserva) {
+      console.error('❌ Error al obtener reserva actualizada:', selectError);
+      return res.status(500).json({ success: false, error: 'Error al obtener reserva actualizada' });
     }
-
-    const selectSQL = `
-      SELECT r.*, 
-             p.nombre AS pistaNombre, 
-             p.tipo AS pistaTipo,
-             poli.nombre AS polideportivo_nombre
-      FROM reservas r
-      LEFT JOIN pistas p ON r.pista_id = p.id
-      LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-      WHERE r.id = ?
-    `;
     
-    db.query(selectSQL, [id], (err, rows) => {
-      if (err) {
-        console.error('❌ Error al obtener reserva actualizada:', err);
-        return res.status(500).json({ success: false, error: 'Error al obtener reserva actualizada' });
-      }
-      
-      console.log('✅ Reserva cancelada correctamente ID:', id);
-      
-      const reservaConLudoteca = {
-        ...rows[0],
-        ludoteca: false
-      };
+    console.log('✅ Reserva cancelada correctamente ID:', id);
+    
+    const reservaConLudoteca = {
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    };
 
-      res.json({ 
-        success: true, 
-        data: reservaConLudoteca, 
-        message: 'Reserva cancelada correctamente' 
-      });
+    res.json({ 
+      success: true, 
+      data: reservaConLudoteca, 
+      message: 'Reserva cancelada correctamente' 
     });
-  });
+  } catch (error) {
+    console.error('❌ Error al cancelar reserva:', error);
+    return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
+  }
 });
 
 // 👇 RUTA ACTUALIZAR RESERVA
-router.put('/:id', (req, res) => {
-  const db = req.app.get('conexion');
+router.put('/:id', async (req, res) => {
+  const supabase = req.app.get('supabase');
   const { id } = req.params;
   const {
     pista_id,
@@ -845,242 +819,164 @@ router.put('/:id', (req, res) => {
 
   const reservaId = parseInt(id);
 
-  // Primero obtener la reserva actual
-  const getReservaSQL = `SELECT * FROM reservas WHERE id = ?`;
-  
-  db.query(getReservaSQL, [reservaId], (err, results) => {
-    if (err) {
-      console.error('❌ Error al obtener reserva:', err);
-      return res.status(500).json({ success: false, error: 'Error al obtener reserva' });
-    }
-    
-    if (results.length === 0) {
-      console.log('❌ Reserva no encontrada ID:', reservaId);
+  try {
+    // Primero obtener la reserva actual
+    const { data: reservaActual, error: getError } = await supabase
+      .from('reservas')
+      .select('*')
+      .eq('id', reservaId)
+      .single();
+
+    if (getError || !reservaActual) {
+      console.error('❌ Error al obtener reserva:', getError);
       return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
     }
 
-    const reservaActual = results[0];
     console.log('📋 Reserva actual:', reservaActual);
     
-    // Función para verificar disponibilidad
-    const verificarDisponibilidad = (callback) => {
-      if (pista_id || fecha || hora_inicio || hora_fin) {
-        const pistaId = pista_id || reservaActual.pista_id;
-        const fechaReserva = fecha ? formatearFechaParaMySQL(fecha) : reservaActual.fecha;
-        const horaInicio = hora_inicio || reservaActual.hora_inicio;
-        const horaFin = hora_fin || reservaActual.hora_fin;
+    // Verificar disponibilidad si se cambian datos de horario/pista
+    if (pista_id || fecha || hora_inicio || hora_fin) {
+      const pistaId = pista_id || reservaActual.pista_id;
+      const fechaReserva = fecha ? formatearFecha(fecha) : reservaActual.fecha;
+      const horaInicio = hora_inicio || reservaActual.hora_inicio;
+      const horaFin = hora_fin || reservaActual.hora_fin;
 
-        console.log('🔍 Verificando disponibilidad con:', {
-          pistaId, fechaReserva, horaInicio, horaFin, reservaId
-        });
+      console.log('🔍 Verificando disponibilidad con:', {
+        pistaId, fechaReserva, horaInicio, horaFin, reservaId
+      });
 
-        if (!fechaReserva) {
-          return callback(new Error('Fecha inválida'));
-        }
-
-        if (hora_inicio && !validarHora(hora_inicio)) {
-          return callback(new Error('Formato de hora de inicio inválido'));
-        }
-
-        if (hora_fin && !validarHora(hora_fin)) {
-          return callback(new Error('Formato de hora de fin inválido'));
-        }
-
-        const disponibilidadSQL = `
-          SELECT * FROM reservas 
-          WHERE pista_id = ? 
-          AND fecha = ? 
-          AND id != ? 
-          AND estado != 'cancelada' 
-          AND (
-            (hora_inicio < ? AND hora_fin > ?) OR
-            (hora_inicio >= ? AND hora_inicio < ?) OR
-            (hora_fin > ? AND hora_fin <= ?)
-          )
-        `;
-
-        db.query(disponibilidadSQL, [
-          pistaId, fechaReserva, reservaId, 
-          horaFin, horaInicio, 
-          horaInicio, horaFin, 
-          horaInicio, horaFin
-        ], (err, results) => {
-          if (err) {
-            console.error('❌ Error al comprobar disponibilidad:', err);
-            return callback(new Error('Error al comprobar disponibilidad'));
-          }
-          
-          if (results.length > 0) {
-            console.log('🚫 Conflicto de disponibilidad encontrado:', results);
-            return callback(new Error('La pista no está disponible en el horario seleccionado'));
-          }
-
-          console.log('✅ Disponibilidad verificada - Sin conflictos');
-          callback(null);
-        });
-      } else {
-        callback(null);
-      }
-    };
-
-    // Función para obtener el polideportivo_id si se cambia la pista
-    const obtenerPolideportivoId = (callback) => {
-      if (pista_id && pista_id !== reservaActual.pista_id) {
-        console.log('🔄 Cambiando pista, obteniendo nuevo polideportivo_id');
-        const pistaSQL = `SELECT polideportivo_id FROM pistas WHERE id = ?`;
-        db.query(pistaSQL, [pista_id], (err, pistaResults) => {
-          if (err) {
-            console.error('❌ Error al obtener polideportivo de la pista:', err);
-            return callback(new Error('Error al obtener información de la pista'));
-          }
-          
-          if (pistaResults.length === 0) {
-            return callback(new Error('Pista no encontrada'));
-          }
-
-          console.log('📍 Nuevo polideportivo_id:', pistaResults[0].polideportivo_id);
-          callback(null, pistaResults[0].polideportivo_id);
-        });
-      } else {
-        callback(null, null);
-      }
-    };
-
-    // Función para actualizar la reserva
-    const actualizarReserva = (nuevoPolideportivoId) => {
-      const updateFields = [];
-      const updateValues = [];
-
-      // Campos a actualizar
-      if (pista_id !== undefined) {
-        updateFields.push('pista_id = ?');
-        updateValues.push(pista_id);
+      if (!fechaReserva) {
+        return res.status(400).json({ success: false, error: 'Fecha inválida' });
       }
 
-      if (fecha !== undefined) {
-        const fechaFormateada = formatearFechaParaMySQL(fecha);
-        if (!fechaFormateada) {
-          return res.status(400).json({ success: false, error: 'Fecha inválida' });
-        }
-        updateFields.push('fecha = ?');
-        updateValues.push(fechaFormateada);
+      if (hora_inicio && !validarHora(hora_inicio)) {
+        return res.status(400).json({ success: false, error: 'Formato de hora de inicio inválido' });
       }
 
-      if (hora_inicio !== undefined) {
-        if (!validarHora(hora_inicio)) {
-          return res.status(400).json({ success: false, error: 'Formato de hora de inicio inválido' });
-        }
-        updateFields.push('hora_inicio = ?');
-        updateValues.push(hora_inicio);
+      if (hora_fin && !validarHora(hora_fin)) {
+        return res.status(400).json({ success: false, error: 'Formato de hora de fin inválido' });
       }
 
-      if (hora_fin !== undefined) {
-        if (!validarHora(hora_fin)) {
-          return res.status(400).json({ success: false, error: 'Formato de hora de fin inválido' });
-        }
-        updateFields.push('hora_fin = ?');
-        updateValues.push(hora_fin);
+      const { data: reservasConflictivas, error: disponibilidadError } = await supabase
+        .from('reservas')
+        .select('id')
+        .eq('pista_id', pistaId)
+        .eq('fecha', fechaReserva)
+        .neq('id', reservaId)
+        .neq('estado', 'cancelada')
+        .or(`and(hora_inicio.lt.${horaFin},hora_fin.gt.${horaInicio}),and(hora_inicio.gte.${horaInicio},hora_inicio.lt.${horaFin}),and(hora_fin.gt.${horaInicio},hora_fin.lte.${horaFin})`);
+
+      if (disponibilidadError) {
+        console.error('❌ Error al comprobar disponibilidad:', disponibilidadError);
+        return res.status(500).json({ success: false, error: 'Error al comprobar disponibilidad' });
       }
-
-      if (precio !== undefined) {
-        const precioNum = parseFloat(precio);
-        if (isNaN(precioNum)) {
-          return res.status(400).json({ success: false, error: 'Precio inválido' });
-        }
-        updateFields.push('precio = ?');
-        updateValues.push(precioNum);
-      }
-
-      if (estado !== undefined) {
-        updateFields.push('estado = ?');
-        updateValues.push(estado);
-      }
-
-      // Si tenemos un nuevo polideportivo_id, actualizarlo
-      if (nuevoPolideportivoId !== null) {
-        updateFields.push('polideportivo_id = ?');
-        updateValues.push(nuevoPolideportivoId);
-      }
-
-      if (updateFields.length === 0) {
-        console.log('❌ No hay campos para actualizar');
-        return res.status(400).json({ success: false, error: 'No hay campos para actualizar' });
-      }
-
-      updateValues.push(reservaId);
-
-      console.log('🔄 Campos a actualizar:', updateFields);
-      console.log('📊 Valores:', updateValues);
-
-      const updateSQL = `UPDATE reservas SET ${updateFields.join(', ')} WHERE id = ?`;
       
-      db.query(updateSQL, updateValues, (err, result) => {
-        if (err) {
-          console.error('❌ Error al actualizar reserva:', err);
-          console.error('Detalles del error SQL:', err.sqlMessage);
-          return res.status(500).json({ success: false, error: 'Error al actualizar reserva en la base de datos' });
-        }
-
-        console.log('✅ Reserva actualizada en BD. Filas afectadas:', result.affectedRows);
-
-        // Obtener reserva actualizada
-        const selectSQL = `
-          SELECT r.*, 
-                 p.nombre AS pistaNombre, 
-                 p.tipo AS pistaTipo,
-                 poli.nombre AS polideportivo_nombre
-          FROM reservas r
-          LEFT JOIN pistas p ON r.pista_id = p.id
-          LEFT JOIN polideportivos poli ON r.polideportivo_id = poli.id
-          WHERE r.id = ?
-        `;
-        
-        db.query(selectSQL, [reservaId], (err, rows) => {
-          if (err) {
-            console.error('❌ Error al obtener reserva actualizada:', err);
-            return res.status(500).json({ success: false, error: 'Error al obtener reserva actualizada' });
-          }
-          
-          if (rows.length === 0) {
-            console.log('❌ Reserva no encontrada después de actualizar ID:', reservaId);
-            return res.status(404).json({ success: false, error: 'Reserva no encontrada después de actualizar' });
-          }
-
-          console.log('📄 Reserva actualizada obtenida:', rows[0]);
-
-          const reservaConLudoteca = {
-            ...rows[0],
-            ludoteca: ludoteca
-          };
-
-          console.log('🎉 Reserva actualizada correctamente ID:', reservaId);
-          
-          res.json({ 
-            success: true, 
-            data: reservaConLudoteca, 
-            message: 'Reserva actualizada correctamente' 
-          });
-        });
-      });
-    };
-
-    // Flujo principal: Verificar disponibilidad -> Obtener polideportivo -> Actualizar
-    verificarDisponibilidad((errorDisponibilidad) => {
-      if (errorDisponibilidad) {
-        console.log('🚫 Error de disponibilidad:', errorDisponibilidad.message);
-        return res.status(409).json({ success: false, error: errorDisponibilidad.message });
+      if (reservasConflictivas && reservasConflictivas.length > 0) {
+        console.log('🚫 Conflicto de disponibilidad encontrado:', reservasConflictivas.length);
+        return res.status(409).json({ success: false, error: 'La pista no está disponible en el horario seleccionado' });
       }
 
-      obtenerPolideportivoId((errorPolideportivo, nuevoPolideportivoId) => {
-        if (errorPolideportivo) {
-          console.log('🚫 Error obteniendo polideportivo:', errorPolideportivo.message);
-          return res.status(400).json({ success: false, error: errorPolideportivo.message });
-        }
+      console.log('✅ Disponibilidad verificada - Sin conflictos');
+    }
 
-        actualizarReserva(nuevoPolideportivoId);
-      });
+    // Obtener el polideportivo_id si se cambia la pista
+    let nuevoPolideportivoId = null;
+    if (pista_id && pista_id !== reservaActual.pista_id) {
+      console.log('🔄 Cambiando pista, obteniendo nuevo polideportivo_id');
+      const { data: pista, error: pistaError } = await supabase
+        .from('pistas')
+        .select('polideportivo_id')
+        .eq('id', pista_id)
+        .single();
+
+      if (pistaError || !pista) {
+        return res.status(400).json({ success: false, error: 'Pista no encontrada' });
+      }
+
+      nuevoPolideportivoId = pista.polideportivo_id;
+      console.log('📍 Nuevo polideportivo_id:', nuevoPolideportivoId);
+    }
+
+    // Preparar datos para actualizar
+    const updateData = {};
+
+    // Campos a actualizar
+    if (pista_id !== undefined) updateData.pista_id = pista_id;
+    if (fecha !== undefined) {
+      const fechaFormateada = formatearFecha(fecha);
+      if (!fechaFormateada) {
+        return res.status(400).json({ success: false, error: 'Fecha inválida' });
+      }
+      updateData.fecha = fechaFormateada;
+    }
+    if (hora_inicio !== undefined) {
+      if (!validarHora(hora_inicio)) {
+        return res.status(400).json({ success: false, error: 'Formato de hora de inicio inválido' });
+      }
+      updateData.hora_inicio = hora_inicio;
+    }
+    if (hora_fin !== undefined) {
+      if (!validarHora(hora_fin)) {
+        return res.status(400).json({ success: false, error: 'Formato de hora de fin inválido' });
+      }
+      updateData.hora_fin = hora_fin;
+    }
+    if (precio !== undefined) {
+      const precioNum = parseFloat(precio);
+      if (isNaN(precioNum)) {
+        return res.status(400).json({ success: false, error: 'Precio inválido' });
+      }
+      updateData.precio = precioNum;
+    }
+    if (estado !== undefined) updateData.estado = estado;
+    if (nuevoPolideportivoId !== null) updateData.polideportivo_id = nuevoPolideportivoId;
+
+    if (Object.keys(updateData).length === 0) {
+      console.log('❌ No hay campos para actualizar');
+      return res.status(400).json({ success: false, error: 'No hay campos para actualizar' });
+    }
+
+    console.log('🔄 Campos a actualizar:', updateData);
+
+    // Actualizar la reserva
+    const { data: reservaActualizada, error: updateError } = await supabase
+      .from('reservas')
+      .update(updateData)
+      .eq('id', reservaId)
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('❌ Error al actualizar reserva:', updateError);
+      return res.status(500).json({ success: false, error: 'Error al actualizar reserva en la base de datos' });
+    }
+
+    console.log('✅ Reserva actualizada en BD. ID:', reservaActualizada.id);
+
+    const reservaConLudoteca = {
+      ...reservaActualizada,
+      ludoteca: ludoteca,
+      pistaNombre: reservaActualizada.pistas?.nombre,
+      pistaTipo: reservaActualizada.pistas?.tipo,
+      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
+    };
+
+    console.log('🎉 Reserva actualizada correctamente ID:', reservaId);
+    
+    res.json({ 
+      success: true, 
+      data: reservaConLudoteca, 
+      message: 'Reserva actualizada correctamente' 
     });
-  });
+
+  } catch (error) {
+    console.error('❌ Error al actualizar reserva:', error);
+    return res.status(500).json({ success: false, error: 'Error interno del servidor' });
+  }
 });
 
 module.exports = router;

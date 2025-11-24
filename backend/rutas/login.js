@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 router.post('/', async (req, res) => {
-  const conexion = req.app.get('conexion');
+  const supabase = req.app.get('supabase');
   const { usuario, pass } = req.body;
 
   // Validación de campos
@@ -16,19 +16,29 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Buscar el usuario en la base de datos con promesas
-    const [results] = await conexion.promise().query(
-      'SELECT * FROM usuarios WHERE usuario = ?', [usuario]
-    );
+    // Buscar el usuario en Supabase
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('usuario', usuario)
+      .limit(1);
 
-    if (results.length === 0) {
+    if (error) {
+      console.error('Error en consulta Supabase:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error interno del servidor'
+      });
+    }
+
+    if (!usuarios || usuarios.length === 0) {
       return res.status(401).json({
         success: false,
         error: 'Usuario o contraseña incorrectos'
       });
     }
 
-    const usuarioEncontrado = results[0];
+    const usuarioEncontrado = usuarios[0];
 
     // Comparar la contraseña (bcrypt.compare es async)
     const coincide = await bcrypt.compare(pass, usuarioEncontrado.pass);

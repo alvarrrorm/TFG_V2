@@ -87,6 +87,7 @@ function generarCodigo() {
 router.post('/solicitar-recuperacion', async (req, res) => {
   try {
     const { email } = req.body;
+    const supabase = req.app.get('supabase');
 
     console.log('🔐 Solicitud de recuperación para:', email);
 
@@ -97,90 +98,98 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    const db = req.app.get('conexion');
-
     // Verificar si el usuario existe y obtener TODOS LOS DATOS
-    const sql = 'SELECT id, nombre, correo, usuario, dni, telefono FROM usuarios WHERE correo = ?';
-    db.query(sql, [email], async (err, results) => {
-      if (err) {
-        console.error('❌ Error en base de datos:', err);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error interno del servidor' 
-        });
-      }
+    const { data: usuarios, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo, usuario, dni, telefono')
+      .eq('correo', email)
+      .limit(1);
 
-      // Por seguridad, siempre devolvemos el mismo mensaje
-      const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
-      if (results.length === 0) {
-        console.log('📧 Email no encontrado (por seguridad):', email);
-        return res.json({ 
-          success: true, 
-          message: mensajeSeguro
-        });
-      }
-
-      const usuario = results[0];
-      
-      // Generar código de 6 dígitos
-      const codigo = generarCodigo();
-      
-      // Guardar código en la base de datos CON EL USER_ID para seguimiento
-      const insertSql = 'INSERT INTO recuperacion_password (email, codigo, expiracion, user_id, user_username) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE), ?, ?)';
-      db.query(insertSql, [email, codigo, usuario.id, usuario.usuario], async (err, result) => {
-        if (err) {
-          console.error('❌ Error guardando código:', err);
-          // Continuamos aunque falle el guardado
-        }
-
-        // Enviar email de recuperación CON TODA LA INFORMACIÓN DEL USUARIO
-        try {
-          const datosEmail = {
-            email: usuario.correo,
-            nombre_usuario: usuario.nombre,
-            usuario: usuario.usuario,
-            codigo: codigo
-          };
-
-          // Log de seguridad - quién está solicitando recuperación
-          console.log('👤 USUARIO SOLICITANDO RECUPERACIÓN:', {
-            id: usuario.id,
-            nombre: usuario.nombre,
-            usuario: usuario.usuario,
-            email: usuario.correo,
-            dni: usuario.dni ? `${usuario.dni.substring(0, 3)}...` : 'No disponible',
-            telefono: usuario.telefono || 'No disponible',
-            timestamp: new Date().toISOString()
-          });
-
-          await enviarEmailRecuperacionPassword(datosEmail);
-          
-          res.json({ 
-            success: true, 
-            message: mensajeSeguro,
-            // Solo en desarrollo mostramos info adicional
-            debug: process.env.NODE_ENV === 'development' ? {
-              usuario: usuario.usuario,
-              nombre: usuario.nombre,
-              codigo: codigo
-            } : undefined
-          });
-          
-        } catch (emailError) {
-          console.error('❌ Error enviando email de recuperación:', emailError);
-          res.status(500).json({ 
-            success: false, 
-            error: 'Error al enviar el email de recuperación',
-            // En desarrollo mostramos el código para testing
-            debug: process.env.NODE_ENV === 'development' ? {
-              codigo: codigo,
-              usuario: usuario.usuario
-            } : undefined
-          });
-        }
+    if (userError) {
+      console.error('❌ Error en base de datos:', userError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
       });
-    });
+    }
+
+    // Por seguridad, siempre devolvemos el mismo mensaje
+    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
+
+    if (!usuarios || usuarios.length === 0) {
+      console.log('📧 Email no encontrado (por seguridad):', email);
+      return res.json({ 
+        success: true, 
+        message: mensajeSeguro
+      });
+    }
+
+    const usuario = usuarios[0];
+    
+    // Generar código de 6 dígitos
+    const codigo = generarCodigo();
+    
+    // Guardar código en la base de datos CON EL USER_ID para seguimiento
+    const { error: insertError } = await supabase
+      .from('recuperacion_password')
+      .insert([{
+        email: email,
+        codigo: codigo,
+        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 minutos
+        user_id: usuario.id,
+        user_username: usuario.usuario
+      }]);
+
+    if (insertError) {
+      console.error('❌ Error guardando código:', insertError);
+      // Continuamos aunque falle el guardado
+    }
+
+    // Enviar email de recuperación CON TODA LA INFORMACIÓN DEL USUARIO
+    try {
+      const datosEmail = {
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre,
+        usuario: usuario.usuario,
+        codigo: codigo
+      };
+
+      // Log de seguridad - quién está solicitando recuperación
+      console.log('👤 USUARIO SOLICITANDO RECUPERACIÓN:', {
+        id: usuario.id,
+        nombre: usuario.nombre,
+        usuario: usuario.usuario,
+        email: usuario.correo,
+        dni: usuario.dni ? `${usuario.dni.substring(0, 3)}...` : 'No disponible',
+        telefono: usuario.telefono || 'No disponible',
+        timestamp: new Date().toISOString()
+      });
+
+      await enviarEmailRecuperacionPassword(datosEmail);
+      
+      res.json({ 
+        success: true, 
+        message: mensajeSeguro,
+        // Solo en desarrollo mostramos info adicional
+        debug: process.env.NODE_ENV === 'development' ? {
+          usuario: usuario.usuario,
+          nombre: usuario.nombre,
+          codigo: codigo
+        } : undefined
+      });
+      
+    } catch (emailError) {
+      console.error('❌ Error enviando email de recuperación:', emailError);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al enviar el email de recuperación',
+        // En desarrollo mostramos el código para testing
+        debug: process.env.NODE_ENV === 'development' ? {
+          codigo: codigo,
+          usuario: usuario.usuario
+        } : undefined
+      });
+    }
     
   } catch (error) {
     console.error('❌ Error en solicitar-recuperacion:', error);
@@ -195,6 +204,7 @@ router.post('/solicitar-recuperacion', async (req, res) => {
 router.post('/reenviar-codigo', async (req, res) => {
   try {
     const { email } = req.body;
+    const supabase = req.app.get('supabase');
 
     console.log('🔄 Reenviando código para:', email);
 
@@ -205,79 +215,87 @@ router.post('/reenviar-codigo', async (req, res) => {
       });
     }
 
-    const db = req.app.get('conexion');
-
     // Verificar si el usuario existe
-    const sql = 'SELECT id, nombre, correo, usuario FROM usuarios WHERE correo = ?';
-    db.query(sql, [email], async (err, results) => {
-      if (err) {
-        console.error('❌ Error en base de datos:', err);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error interno del servidor' 
-        });
-      }
+    const { data: usuarios, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo, usuario')
+      .eq('correo', email)
+      .limit(1);
 
-      const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
-      if (results.length === 0) {
-        return res.json({ 
-          success: true, 
-          message: mensajeSeguro
-        });
-      }
-
-      const usuario = results[0];
-      
-      // Generar NUEVO código de 6 dígitos
-      const nuevoCodigo = generarCodigo();
-      
-      // Guardar NUEVO código en la base de datos
-      const insertSql = 'INSERT INTO recuperacion_password (email, codigo, expiracion, user_id, user_username) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE), ?, ?)';
-      db.query(insertSql, [email, nuevoCodigo, usuario.id, usuario.usuario], async (err, result) => {
-        if (err) {
-          console.error('❌ Error guardando nuevo código:', err);
-        }
-
-        // Enviar NUEVO email de recuperación
-        try {
-          const datosEmail = {
-            email: usuario.correo,
-            nombre_usuario: usuario.nombre,
-            usuario: usuario.usuario,
-            codigo: nuevoCodigo
-          };
-
-          console.log('🔄 REENVIO DE CÓDIGO PARA:', {
-            usuario: usuario.usuario,
-            email: usuario.correo,
-            nuevo_codigo: nuevoCodigo
-          });
-
-          await enviarEmailRecuperacionPassword(datosEmail);
-          
-          res.json({ 
-            success: true, 
-            message: mensajeSeguro,
-            debug: process.env.NODE_ENV === 'development' ? {
-              usuario: usuario.usuario,
-              codigo: nuevoCodigo
-            } : undefined
-          });
-          
-        } catch (emailError) {
-          console.error('❌ Error reenviando email de recuperación:', emailError);
-          res.status(500).json({ 
-            success: false, 
-            error: 'Error al reenviar el email de recuperación',
-            debug: process.env.NODE_ENV === 'development' ? {
-              codigo: nuevoCodigo,
-              usuario: usuario.usuario
-            } : undefined
-          });
-        }
+    if (userError) {
+      console.error('❌ Error en base de datos:', userError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
       });
-    });
+    }
+
+    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
+
+    if (!usuarios || usuarios.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: mensajeSeguro
+      });
+    }
+
+    const usuario = usuarios[0];
+    
+    // Generar NUEVO código de 6 dígitos
+    const nuevoCodigo = generarCodigo();
+    
+    // Guardar NUEVO código en la base de datos
+    const { error: insertError } = await supabase
+      .from('recuperacion_password')
+      .insert([{
+        email: email,
+        codigo: nuevoCodigo,
+        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 minutos
+        user_id: usuario.id,
+        user_username: usuario.usuario
+      }]);
+
+    if (insertError) {
+      console.error('❌ Error guardando nuevo código:', insertError);
+    }
+
+    // Enviar NUEVO email de recuperación
+    try {
+      const datosEmail = {
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre,
+        usuario: usuario.usuario,
+        codigo: nuevoCodigo
+      };
+
+      console.log('🔄 REENVIO DE CÓDIGO PARA:', {
+        usuario: usuario.usuario,
+        email: usuario.correo,
+        nuevo_codigo: nuevoCodigo
+      });
+
+      await enviarEmailRecuperacionPassword(datosEmail);
+      
+      res.json({ 
+        success: true, 
+        message: mensajeSeguro,
+        debug: process.env.NODE_ENV === 'development' ? {
+          usuario: usuario.usuario,
+          codigo: nuevoCodigo
+        } : undefined
+      });
+      
+    } catch (emailError) {
+      console.error('❌ Error reenviando email de recuperación:', emailError);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al reenviar el email de recuperación',
+        debug: process.env.NODE_ENV === 'development' ? {
+          codigo: nuevoCodigo,
+          usuario: usuario.usuario
+        } : undefined
+      });
+    }
     
   } catch (error) {
     console.error('❌ Error en reenviar-codigo:', error);
@@ -292,6 +310,7 @@ router.post('/reenviar-codigo', async (req, res) => {
 router.post('/verificar-codigo', async (req, res) => {
   try {
     const { email, codigo } = req.body;
+    const supabase = req.app.get('supabase');
 
     console.log('🔍 Verificando código para:', email);
 
@@ -302,51 +321,52 @@ router.post('/verificar-codigo', async (req, res) => {
       });
     }
 
-    const db = req.app.get('conexion');
-
     // Verificar código en la base de datos CON INFORMACIÓN DEL USUARIO
-    const sql = `
-      SELECT rp.*, u.usuario, u.nombre 
-      FROM recuperacion_password rp 
-      LEFT JOIN usuarios u ON rp.user_id = u.id 
-      WHERE rp.email = ? AND rp.codigo = ? AND rp.expiracion > NOW() AND rp.usado = 0 
-      ORDER BY rp.creado DESC LIMIT 1
-    `;
+    const { data: recuperaciones, error } = await supabase
+      .from('recuperacion_password')
+      .select(`
+        *,
+        usuarios!inner(id, usuario, nombre)
+      `)
+      .eq('email', email)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expiracion', new Date().toISOString())
+      .order('creado', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error('❌ Error verificando código:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    if (!recuperaciones || recuperaciones.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido, expirado o ya utilizado' 
+      });
+    }
+
+    const recuperacion = recuperaciones[0];
     
-    db.query(sql, [email, codigo], (err, results) => {
-      if (err) {
-        console.error('❌ Error verificando código:', err);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error interno del servidor' 
-        });
+    console.log('✅ Código verificado para usuario:', {
+      usuario: recuperacion.usuarios?.usuario,
+      nombre: recuperacion.usuarios?.nombre,
+      email: recuperacion.email
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Código verificado correctamente',
+      valido: true,
+      // Enviamos info del usuario al frontend para confirmación
+      usuario: {
+        username: recuperacion.usuarios?.usuario,
+        nombre: recuperacion.usuarios?.nombre
       }
-
-      if (results.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Código inválido, expirado o ya utilizado' 
-        });
-      }
-
-      const recuperacion = results[0];
-      
-      console.log('✅ Código verificado para usuario:', {
-        usuario: recuperacion.usuario,
-        nombre: recuperacion.nombre,
-        email: recuperacion.email
-      });
-
-      res.json({ 
-        success: true, 
-        message: 'Código verificado correctamente',
-        valido: true,
-        // Enviamos info del usuario al frontend para confirmación
-        usuario: {
-          username: recuperacion.usuario,
-          nombre: recuperacion.nombre
-        }
-      });
     });
     
   } catch (error) {
@@ -362,6 +382,7 @@ router.post('/verificar-codigo', async (req, res) => {
 router.post('/cambiar-password', async (req, res) => {
   try {
     const { email, codigo, nuevaPassword } = req.body;
+    const supabase = req.app.get('supabase');
 
     console.log('🔄 Cambiando password para:', email);
 
@@ -379,93 +400,92 @@ router.post('/cambiar-password', async (req, res) => {
       });
     }
 
-    const db = req.app.get('conexion');
-
     // Verificar que el código es válido y obtener info del usuario
-    const verificarSql = `
-      SELECT rp.*, u.id as user_id, u.usuario, u.nombre 
-      FROM recuperacion_password rp 
-      LEFT JOIN usuarios u ON rp.user_id = u.id 
-      WHERE rp.email = ? AND rp.codigo = ? AND rp.expiracion > NOW() AND rp.usado = 0 
-      ORDER BY rp.creado DESC LIMIT 1
-    `;
-    
-    db.query(verificarSql, [email, codigo], async (err, results) => {
-      if (err) {
-        console.error('❌ Error verificando código:', err);
+    const { data: recuperaciones, error: verificarError } = await supabase
+      .from('recuperacion_password')
+      .select(`
+        *,
+        usuarios!inner(id, usuario, nombre)
+      `)
+      .eq('email', email)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expiracion', new Date().toISOString())
+      .order('creado', { ascending: false })
+      .limit(1);
+
+    if (verificarError) {
+      console.error('❌ Error verificando código:', verificarError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    if (!recuperaciones || recuperaciones.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido o expirado' 
+      });
+    }
+
+    const recuperacion = recuperaciones[0];
+    const userId = recuperacion.usuarios?.id;
+
+    try {
+      // 👇 ENCRIPTAR LA NUEVA CONTRASEÑA CON BCRYPT
+      const hashedPassword = await encriptarPassword(nuevaPassword);
+      
+      console.log('🔐 Contraseña encriptada correctamente para usuario:', recuperacion.usuarios?.usuario);
+
+      // Actualizar contraseña del usuario CON LA CONTRASEÑA ENCRIPTADA
+      const { error: updateError } = await supabase
+        .from('usuarios')
+        .update({ pass: hashedPassword })
+        .eq('id', userId);
+
+      if (updateError) {
+        console.error('❌ Error actualizando contraseña:', updateError);
         return res.status(500).json({ 
           success: false, 
-          error: 'Error interno del servidor' 
+          error: 'Error al cambiar la contraseña' 
         });
       }
 
-      if (results.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Código inválido o expirado' 
-        });
-      }
+      // Marcar código como usado
+      await supabase
+        .from('recuperacion_password')
+        .update({ usado: true })
+        .eq('email', email)
+        .eq('codigo', codigo);
 
-      const recuperacion = results[0];
-      const userId = recuperacion.user_id;
+      // Log de la operación completada
+      console.log('✅ CONTRASEÑA CAMBIADA EXITOSAMENTE:', {
+        usuario: recuperacion.usuarios?.usuario,
+        nombre: recuperacion.usuarios?.nombre,
+        email: email,
+        user_id: userId,
+        contraseña_encriptada: true,
+        timestamp: new Date().toISOString()
+      });
 
-      try {
-        // 👇 ENCRIPTAR LA NUEVA CONTRASEÑA CON BCRYPT
-        const hashedPassword = await encriptarPassword(nuevaPassword);
-        
-        console.log('🔐 Contraseña encriptada correctamente para usuario:', recuperacion.usuario);
+      res.json({ 
+        success: true, 
+        message: 'Contraseña cambiada exitosamente',
+        actualizado: true,
+        usuario: {
+          username: recuperacion.usuarios?.usuario,
+          nombre: recuperacion.usuarios?.nombre
+        }
+      });
 
-        // Actualizar contraseña del usuario CON LA CONTRASEÑA ENCRIPTADA
-        const updateSql = 'UPDATE usuarios SET pass = ? WHERE id = ?';
-        db.query(updateSql, [hashedPassword, userId], (err, result) => {
-          if (err) {
-            console.error('❌ Error actualizando contraseña:', err);
-            return res.status(500).json({ 
-              success: false, 
-              error: 'Error al cambiar la contraseña' 
-            });
-          }
-
-          if (result.affectedRows === 0) {
-            return res.status(400).json({ 
-              success: false, 
-              error: 'Usuario no encontrado' 
-            });
-          }
-
-          // Marcar código como usado
-          const marcarUsadoSql = 'UPDATE recuperacion_password SET usado = 1 WHERE email = ? AND codigo = ?';
-          db.query(marcarUsadoSql, [email, codigo]);
-
-          // Log de la operación completada
-          console.log('✅ CONTRASEÑA CAMBIADA EXITOSAMENTE:', {
-            usuario: recuperacion.usuario,
-            nombre: recuperacion.nombre,
-            email: email,
-            user_id: userId,
-            contraseña_encriptada: true,
-            timestamp: new Date().toISOString()
-          });
-
-          res.json({ 
-            success: true, 
-            message: 'Contraseña cambiada exitosamente',
-            actualizado: true,
-            usuario: {
-              username: recuperacion.usuario,
-              nombre: recuperacion.nombre
-            }
-          });
-        });
-
-      } catch (encryptionError) {
-        console.error('❌ Error encriptando contraseña:', encryptionError);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error al procesar la contraseña' 
-        });
-      }
-    });
+    } catch (encryptionError) {
+      console.error('❌ Error encriptando contraseña:', encryptionError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al procesar la contraseña' 
+      });
+    }
     
   } catch (error) {
     console.error('❌ Error en cambiar-password:', error);
