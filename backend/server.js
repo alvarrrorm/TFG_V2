@@ -64,10 +64,10 @@ function validarTelefono(telefono) {
 app.set('supabase', supabase);
 
 // ========== CONFIGURAR RUTAS ==========
-const registroRouter = require('./routes/registro');
-const pistasRouter = require('./routes/pistas');
-const polideportivosRouter = require('./routes/polideportivos');
-const reservasRouter = require('./routes/reservas');
+const registroRouter = require('./rutas/registro');
+const pistasRouter = require('./rutas/pistas');
+const polideportivosRouter = require('./rutas/polideportivos');
+const reservasRouter = require('./rutas/reservas');
 
 // Middleware para pasar la app a los routers
 app.use((req, res, next) => {
