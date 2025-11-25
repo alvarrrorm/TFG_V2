@@ -1,13 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const emailjs = require('@emailjs/nodejs');
+const emailjs = require('@emailjs/nodejs'); // ✅ VERSIÓN 2.0.2
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 // ========== CONFIGURACIÓN ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZURI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
 // Configuración EmailJS
@@ -64,6 +64,7 @@ async function enviarEmailConfirmacion(reserva) {
 
     console.log('📤 Enviando email REAL a:', reserva.email);
     
+    // EmailJS v2.0.2 - sintaxis correcta
     const result = await emailjs.send(
       EMAILJS_SERVICE_ID,
       EMAILJS_TEMPLATE_ID,
@@ -476,7 +477,7 @@ app.post('/api/reservas', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: '✅ Backend funcionando CON EmailJS',
+    message: '✅ Backend funcionando CON EmailJS v2.0.2',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     emailjs: '✅ Configurado'
@@ -526,7 +527,7 @@ app.get('/api/test-email', async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: '✅ Email enviado correctamente con EmailJS REAL',
+      message: '✅ Email enviado correctamente con EmailJS v2.0.2',
       result: result
     });
   } catch (error) {
@@ -585,7 +586,7 @@ app.listen(PORT, () => {
   console.log(`🔐 Login: http://localhost:${PORT}/api/login`);
   console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
   console.log(`🗄️  Supabase: ${supabaseUrl}`);
-  console.log(`📧 EmailJS: CONFIGURADO`);
+  console.log(`📧 EmailJS: v2.0.2 CONFIGURADO`);
   console.log(`🔐 CORS: PERMITIENDO TODOS LOS ORÍGENES`);
 });
 
