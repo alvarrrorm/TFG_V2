@@ -46,9 +46,9 @@ router.post('/', async (req, res) => {
 
   console.log('Datos recibidos:', { nombre, correo, usuario, dni, telefono, pass: '***', pass_2: '***', clave_admin: '***' });
 
-  // Validaciones básicas de campos requeridos
-  if (!nombre || !correo || !usuario || !dni || !telefono || !pass || !pass_2) {
-    return res.status(400).json({ error: 'Por favor, rellena todos los campos' });
+  // Validaciones básicas de campos requeridos (teléfono ahora es opcional)
+  if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
+    return res.status(400).json({ error: 'Por favor, rellena todos los campos obligatorios' });
   }
 
   // Validar formato de email
@@ -62,12 +62,14 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'DNI no válido. Formato correcto: 12345678X' });
   }
 
-  // Validar y limpiar teléfono
-  if (!validarTelefono(telefono)) {
-    return res.status(400).json({ error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos' });
+  // Validar y limpiar teléfono (si se proporciona)
+  let telefonoLimpio = null;
+  if (telefono && telefono.trim() !== '') {
+    if (!validarTelefono(telefono)) {
+      return res.status(400).json({ error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos' });
+    }
+    telefonoLimpio = limpiarTelefono(telefono);
   }
-  
-  const telefonoLimpio = limpiarTelefono(telefono);
 
   // Validar contraseñas
   if (pass !== pass_2) {
@@ -137,17 +139,25 @@ router.post('/', async (req, res) => {
     // Encriptar contraseña y registrar usuario
     const hashedPass = await bcrypt.hash(pass, 10);
     
+    // Preparar datos del usuario
+    const datosUsuario = {
+      nombre: nombre,
+      correo: correo,
+      usuario: usuario,
+      dni: dni,
+      password_hash: hashedPass,
+      rol: rol,
+      fecha_creacion: new Date()
+    };
+    
+    // Solo agregar teléfono si se proporcionó
+    if (telefonoLimpio) {
+      datosUsuario.telefono = telefonoLimpio;
+    }
+
     const { data: nuevoUsuario, error: insertError } = await supabase
       .from('usuarios')
-      .insert([{
-        nombre: nombre,
-        correo: correo,
-        usuario: usuario,
-        dni: dni,
-        pass: hashedPass,
-        rol: rol,
-        telefono: telefonoLimpio
-      }])
+      .insert([datosUsuario])
       .select()
       .single();
 
@@ -164,8 +174,9 @@ router.post('/', async (req, res) => {
 
     console.log('Usuario registrado exitosamente:', { id: nuevoUsuario.id, usuario, rol });
     res.json({ 
-      mensaje: `Usuario registrado correctamente como ${rol}`,
-      usuario: {
+      success: true,
+      message: `Usuario registrado correctamente como ${rol}`,
+      user: {
         id: nuevoUsuario.id,
         nombre: nuevoUsuario.nombre,
         correo: nuevoUsuario.correo,
@@ -178,10 +189,16 @@ router.post('/', async (req, res) => {
     console.error('Error general en el registro:', error);
     
     if (error.message.includes('ya está registrado')) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ 
+        success: false,
+        error: error.message 
+      });
     }
     
-    res.status(500).json({ error: 'Error interno del servidor al registrar el usuario' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Error interno del servidor al registrar el usuario' 
+    });
   }
 });
 
