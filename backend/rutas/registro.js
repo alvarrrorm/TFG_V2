@@ -218,7 +218,7 @@ router.post('/', async (req, res) => {
       correo: correo.trim().toLowerCase(),
       usuario: usuario.trim(),
       dni: dni.trim().toUpperCase(),
-      password_hash: hashedPassword,
+      pass: hashedPassword,
       rol: rol,
       fecha_creacion: new Date().toISOString()
     };
