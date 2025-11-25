@@ -168,7 +168,181 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
+// REGISTRO - COMPLETO Y FUNCIONAL
+app.post('/api/registro', async (req, res) => {
+  try {
+    const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
+    
+    console.log('📝 Registro attempt:', usuario);
+    console.log('📦 Datos recibidos:', { 
+      nombre, correo, usuario, dni, 
+      telefono: telefono || 'No proporcionado',
+      pass: pass ? '***' : 'FALTANTE', 
+      pass_2: pass_2 ? '***' : 'FALTANTE', 
+      clave_admin: clave_admin ? '***' : 'No proporcionada' 
+    });
 
+    // Validaciones básicas
+    if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Por favor, rellena todos los campos obligatorios'
+      });
+    }
+
+    if (!validarEmail(correo)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email no válido'
+      });
+    }
+
+    if (!validarDNI(dni)) {
+      return res.status(400).json({
+        success: false,
+        error: 'DNI no válido. Formato correcto: 12345678X'
+      });
+    }
+
+    // Validar teléfono si se proporciona
+    let telefonoLimpio = null;
+    if (telefono && telefono.trim() !== '') {
+      if (!validarTelefono(telefono)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos'
+        });
+      }
+      telefonoLimpio = limpiarTelefono(telefono);
+    }
+
+    if (pass !== pass_2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Las contraseñas no coinciden'
+      });
+    }
+
+    if (pass.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'La contraseña debe tener al menos 6 caracteres'
+      });
+    }
+
+    const rol = clave_admin === 'admin1234' ? 'admin' : 'user';
+
+    // Verificar duplicados
+    const { data: existingUsers, error: errorCheck } = await supabase
+      .from('usuarios')
+      .select('usuario, correo, dni')
+      .or(`usuario.eq.${usuario},correo.eq.${correo},dni.eq.${dni}`);
+
+    if (errorCheck) {
+      console.error('Error verificando duplicados:', errorCheck);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al verificar disponibilidad'
+      });
+    }
+
+    if (existingUsers && existingUsers.length > 0) {
+      const userExists = existingUsers.find(u => u.usuario === usuario);
+      const emailExists = existingUsers.find(u => u.correo === correo);
+      const dniExists = existingUsers.find(u => u.dni === dni);
+
+      if (userExists) {
+        return res.status(400).json({ success: false, error: 'El nombre de usuario ya está registrado' });
+      }
+      if (emailExists) {
+        return res.status(400).json({ success: false, error: 'El correo electrónico ya está registrado' });
+      }
+      if (dniExists) {
+        return res.status(400).json({ success: false, error: 'El DNI ya está registrado' });
+      }
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(pass, 10);
+
+    // Preparar datos
+    const datosUsuario = {
+      usuario: usuario.trim(),
+      pass: hashedPassword,
+      nombre: nombre.trim(),
+      correo: correo.trim().toLowerCase(),
+      dni: dni.trim().toUpperCase(),
+      rol: rol,
+      fecha_creacion: new Date().toISOString()
+    };
+
+    // Agregar teléfono si es válido
+    if (telefonoLimpio) {
+      datosUsuario.telefono = telefonoLimpio;
+    }
+
+    // Insertar usuario
+    const { data: newUser, error: errorInsert } = await supabase
+      .from('usuarios')
+      .insert([datosUsuario])
+      .select(`
+        id,
+        nombre,
+        correo,
+        usuario,
+        dni,
+        telefono,
+        rol,
+        fecha_creacion
+      `)
+      .single();
+
+    if (errorInsert) {
+      console.error('❌ Error al insertar usuario:', errorInsert);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al registrar el usuario: ' + errorInsert.message
+      });
+    }
+
+    // Generar token
+    const token = jwt.sign(
+      { 
+        id: newUser.id, 
+        usuario: newUser.usuario,
+        nombre: newUser.nombre,
+        email: newUser.correo,
+        rol: newUser.rol
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Usuario registrado exitosamente:', newUser.usuario);
+    
+    res.json({
+      success: true,
+      message: `Usuario registrado correctamente como ${rol}`,
+      token: token,
+      user: {
+        id: newUser.id,
+        usuario: newUser.usuario,
+        nombre: newUser.nombre,
+        email: newUser.correo,
+        dni: newUser.dni,
+        telefono: newUser.telefono,
+        rol: newUser.rol
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error general en registro:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor: ' + error.message
+    });
+  }
+});
 
 // LOGIN
 app.post('/api/login', async (req, res) => {
@@ -198,7 +372,7 @@ app.post('/api/login', async (req, res) => {
     }
 
     // Verificar contraseña
-    const passwordValid = await bcrypt.compare(password, user.password_hash);
+    const passwordValid = await bcrypt.compare(password, user.pass);
 
     if (!passwordValid) {
       return res.status(401).json({
