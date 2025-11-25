@@ -1,14 +1,18 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 const CLAVE_ADMIN = 'admin1234';
+const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
+// Función para validar DNI
 function validarDNI(dni) {
-  // Limpiar y formatear el DNI
+  if (!dni) return false;
+  
   const dniLimpio = dni.toString().trim().toUpperCase();
   const letras = 'TRWAGMYFPDXBNJZSQVHLCKE';
-  const dniRegex = /^(\d{8})([A-Z])$/i;
+  const dniRegex = /^(\d{8})([A-Z])$/;
 
   const match = dniLimpio.match(dniRegex);
   if (!match) return false;
@@ -20,186 +24,306 @@ function validarDNI(dni) {
   return letra === letraCalculada;
 }
 
+// Función para limpiar teléfono
 function limpiarTelefono(telefono) {
-  // Eliminar todos los caracteres no numéricos
+  if (!telefono) return '';
   return telefono.toString().replace(/\D/g, '');
 }
 
+// Función para validar teléfono
 function validarTelefono(telefono) {
   const telefonoLimpio = limpiarTelefono(telefono);
-  // Validar que tenga entre 9 y 15 dígitos después de limpiar
   return /^\d{9,15}$/.test(telefonoLimpio);
 }
 
-router.post('/', async (req, res) => {
-  const supabase = req.app.get('supabase');
-  
-  // Sanitizar y limpiar todos los datos de entrada
-  const nombre = req.body.nombre ? req.body.nombre.toString().trim() : '';
-  const correo = req.body.correo ? req.body.correo.toString().trim().toLowerCase() : '';
-  const usuario = req.body.usuario ? req.body.usuario.toString().trim() : '';
-  const dni = req.body.dni ? req.body.dni.toString().trim().toUpperCase() : '';
-  const telefono = req.body.telefono ? req.body.telefono.toString() : '';
-  const pass = req.body.pass ? req.body.pass.toString() : '';
-  const pass_2 = req.body.pass_2 ? req.body.pass_2.toString() : '';
-  const clave_admin = req.body.clave_admin ? req.body.clave_admin.toString() : '';
-
-  console.log('Datos recibidos:', { nombre, correo, usuario, dni, telefono, pass: '***', pass_2: '***', clave_admin: '***' });
-
-  // Validaciones básicas de campos requeridos (teléfono ahora es opcional)
-  if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
-    return res.status(400).json({ error: 'Por favor, rellena todos los campos obligatorios' });
-  }
-
-  // Validar formato de email
+// Función para validar email
+function validarEmail(email) {
+  if (!email) return false;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(correo)) {
-    return res.status(400).json({ error: 'Formato de correo electrónico no válido' });
-  }
+  return emailRegex.test(email);
+}
 
-  // Validar DNI
-  if (!validarDNI(dni)) {
-    return res.status(400).json({ error: 'DNI no válido. Formato correcto: 12345678X' });
-  }
-
-  // Validar y limpiar teléfono (si se proporciona)
-  let telefonoLimpio = null;
-  if (telefono && telefono.trim() !== '') {
-    if (!validarTelefono(telefono)) {
-      return res.status(400).json({ error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos' });
-    }
-    telefonoLimpio = limpiarTelefono(telefono);
-  }
-
-  // Validar contraseñas
-  if (pass !== pass_2) {
-    return res.status(400).json({ error: 'Las contraseñas no coinciden' });
-  }
-
-  if (pass.length < 6) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
-  }
-
-  const rol = clave_admin === CLAVE_ADMIN ? 'admin' : 'usuario';
-
+// RUTA DE REGISTRO
+router.post('/', async (req, res) => {
   try {
-    // Verificar duplicados en Supabase
-    const verificarDuplicados = async () => {
-      const errors = [];
+    // Obtener Supabase desde la app
+    const supabase = req.app.get('supabase');
+    
+    if (!supabase) {
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error de configuración del servidor' 
+      });
+    }
 
-      // Verificar DNI duplicado
-      const { data: dniExistente, error: dniError } = await supabase
-        .from('usuarios')
-        .select('id')
-        .eq('dni', dni)
-        .limit(1);
+    // ✅ RECIBIR LOS CAMPOS EXACTOS DEL FRONTEND
+    const { 
+      nombre, 
+      correo, 
+      usuario, 
+      dni, 
+      telefono, 
+      pass, 
+      pass_2, 
+      clave_admin 
+    } = req.body;
 
-      if (dniError) {
-        console.error('Error al comprobar DNI:', dniError);
-        errors.push('Error al comprobar el DNI');
-      } else if (dniExistente && dniExistente.length > 0) {
-        errors.push('El DNI ya está registrado');
+    console.log('📝 Datos recibidos en registro:', { 
+      nombre, 
+      correo, 
+      usuario, 
+      dni, 
+      telefono: telefono || 'No proporcionado', 
+      pass: pass ? '***' : 'FALTANTE', 
+      pass_2: pass_2 ? '***' : 'FALTANTE', 
+      clave_admin: clave_admin ? '***' : 'No proporcionada' 
+    });
+
+    // ========== VALIDACIONES ==========
+
+    // Validar campos obligatorios
+    if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Por favor, rellena todos los campos obligatorios' 
+      });
+    }
+
+    // Validar formato de email
+    if (!validarEmail(correo)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Formato de correo electrónico no válido' 
+      });
+    }
+
+    // Validar DNI
+    if (!validarDNI(dni)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'DNI no válido. Formato correcto: 12345678X' 
+      });
+    }
+
+    // Validar y limpiar teléfono (si se proporciona)
+    let telefonoLimpio = null;
+    if (telefono && telefono.trim() !== '') {
+      if (!validarTelefono(telefono)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos' 
+        });
       }
+      telefonoLimpio = limpiarTelefono(telefono);
+    }
 
-      // Verificar correo duplicado
-      const { data: correoExistente, error: correoError } = await supabase
-        .from('usuarios')
-        .select('id')
-        .eq('correo', correo)
-        .limit(1);
+    // Validar contraseñas
+    if (pass !== pass_2) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Las contraseñas no coinciden' 
+      });
+    }
 
-      if (correoError) {
-        console.error('Error al comprobar correo:', correoError);
-        errors.push('Error al comprobar el correo');
-      } else if (correoExistente && correoExistente.length > 0) {
-        errors.push('El correo ya está registrado');
-      }
+    if (pass.length < 6) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'La contraseña debe tener al menos 6 caracteres' 
+      });
+    }
 
-      // Verificar usuario duplicado
-      const { data: usuarioExistente, error: usuarioError } = await supabase
-        .from('usuarios')
-        .select('id')
-        .eq('usuario', usuario)
-        .limit(1);
+    // Determinar rol
+    const rol = (clave_admin === CLAVE_ADMIN) ? 'admin' : 'user';
 
-      if (usuarioError) {
-        console.error('Error al comprobar usuario:', usuarioError);
-        errors.push('Error al comprobar el nombre de usuario');
-      } else if (usuarioExistente && usuarioExistente.length > 0) {
-        errors.push('El nombre de usuario ya está registrado');
-      }
+    // ========== VERIFICAR DUPLICADOS ==========
 
-      if (errors.length > 0) {
-        throw new Error(errors.join(', '));
-      }
-    };
+    console.log('🔍 Verificando duplicados...');
 
-    await verificarDuplicados();
+    // Verificar usuario duplicado
+    const { data: usuarioExistente, error: errorUsuario } = await supabase
+      .from('usuarios')
+      .select('usuario')
+      .eq('usuario', usuario)
+      .limit(1);
 
-    // Encriptar contraseña y registrar usuario
-    const hashedPass = await bcrypt.hash(pass, 10);
+    if (errorUsuario) {
+      console.error('Error al verificar usuario:', errorUsuario);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al verificar disponibilidad del usuario' 
+      });
+    }
+
+    if (usuarioExistente && usuarioExistente.length > 0) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'El nombre de usuario ya está registrado' 
+      });
+    }
+
+    // Verificar correo duplicado
+    const { data: correoExistente, error: errorCorreo } = await supabase
+      .from('usuarios')
+      .select('correo')
+      .eq('correo', correo)
+      .limit(1);
+
+    if (errorCorreo) {
+      console.error('Error al verificar correo:', errorCorreo);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al verificar disponibilidad del correo' 
+      });
+    }
+
+    if (correoExistente && correoExistente.length > 0) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'El correo electrónico ya está registrado' 
+      });
+    }
+
+    // Verificar DNI duplicado
+    const { data: dniExistente, error: errorDNI } = await supabase
+      .from('usuarios')
+      .select('dni')
+      .eq('dni', dni)
+      .limit(1);
+
+    if (errorDNI) {
+      console.error('Error al verificar DNI:', errorDNI);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al verificar disponibilidad del DNI' 
+      });
+    }
+
+    if (dniExistente && dniExistente.length > 0) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'El DNI ya está registrado' 
+      });
+    }
+
+    // ========== CREAR USUARIO ==========
+
+    console.log('✅ No hay duplicados, creando usuario...');
+
+    // Encriptar contraseña
+    const hashedPassword = await bcrypt.hash(pass, 10);
     
     // Preparar datos del usuario
     const datosUsuario = {
-      nombre: nombre,
-      correo: correo,
-      usuario: usuario,
-      dni: dni,
-      password_hash: hashedPass,
+      nombre: nombre.trim(),
+      correo: correo.trim().toLowerCase(),
+      usuario: usuario.trim(),
+      dni: dni.trim().toUpperCase(),
+      password_hash: hashedPassword,
       rol: rol,
-      fecha_creacion: new Date()
+      fecha_creacion: new Date().toISOString()
     };
     
-    // Solo agregar teléfono si se proporcionó
+    // Solo agregar teléfono si se proporcionó y es válido
     if (telefonoLimpio) {
       datosUsuario.telefono = telefonoLimpio;
     }
 
-    const { data: nuevoUsuario, error: insertError } = await supabase
+    console.log('📦 Insertando usuario en base de datos:', {
+      usuario: datosUsuario.usuario,
+      correo: datosUsuario.correo,
+      dni: datosUsuario.dni,
+      rol: datosUsuario.rol,
+      tieneTelefono: !!datosUsuario.telefono
+    });
+
+    // Insertar usuario en Supabase
+    const { data: nuevoUsuario, error: errorInsercion } = await supabase
       .from('usuarios')
       .insert([datosUsuario])
-      .select()
+      .select(`
+        id,
+        nombre,
+        correo,
+        usuario,
+        dni,
+        telefono,
+        rol,
+        fecha_creacion
+      `)
       .single();
 
-    if (insertError) {
-      console.error('Error al registrar usuario:', insertError);
+    if (errorInsercion) {
+      console.error('❌ Error al insertar usuario en Supabase:', errorInsercion);
       
       // Manejar errores específicos de Supabase
-      if (insertError.code === '23505') { // Código de violación de unique constraint
-        return res.status(400).json({ error: 'El usuario, correo o DNI ya está registrado' });
+      if (errorInsercion.code === '23505') {
+        return res.status(400).json({ 
+          success: false,
+          error: 'El usuario, correo o DNI ya está registrado' 
+        });
       }
       
-      return res.status(500).json({ error: 'Error al registrar el usuario en la base de datos' });
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al registrar el usuario en la base de datos: ' + errorInsercion.message 
+      });
     }
 
-    console.log('Usuario registrado exitosamente:', { id: nuevoUsuario.id, usuario, rol });
+    // ========== GENERAR TOKEN Y RESPUESTA ==========
+
+    console.log('✅ Usuario creado exitosamente:', { 
+      id: nuevoUsuario.id, 
+      usuario: nuevoUsuario.usuario, 
+      rol: nuevoUsuario.rol 
+    });
+
+    // Generar token JWT
+    const token = jwt.sign(
+      { 
+        id: nuevoUsuario.id, 
+        usuario: nuevoUsuario.usuario,
+        nombre: nuevoUsuario.nombre,
+        email: nuevoUsuario.correo,
+        rol: nuevoUsuario.rol
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Respuesta exitosa
     res.json({ 
       success: true,
       message: `Usuario registrado correctamente como ${rol}`,
+      token: token,
       user: {
         id: nuevoUsuario.id,
-        nombre: nuevoUsuario.nombre,
-        correo: nuevoUsuario.correo,
         usuario: nuevoUsuario.usuario,
-        rol: nuevoUsuario.rol
+        nombre: nuevoUsuario.nombre,
+        email: nuevoUsuario.correo,
+        dni: nuevoUsuario.dni,
+        telefono: nuevoUsuario.telefono,
+        rol: nuevoUsuario.rol,
+        fecha_creacion: nuevoUsuario.fecha_creacion
       }
     });
 
   } catch (error) {
-    console.error('Error general en el registro:', error);
-    
-    if (error.message.includes('ya está registrado')) {
-      return res.status(400).json({ 
-        success: false,
-        error: error.message 
-      });
-    }
+    console.error('❌ Error general en el registro:', error);
     
     res.status(500).json({ 
       success: false,
-      error: 'Error interno del servidor al registrar el usuario' 
+      error: 'Error interno del servidor al registrar el usuario: ' + error.message 
     });
   }
+});
+
+// Ruta de prueba para verificar que el router funciona
+router.get('/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Router de registro funcionando correctamente',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;

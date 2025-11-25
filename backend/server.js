@@ -1,13 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const emailjs = require('@emailjs/nodejs'); // ✅ VERSIÓN 2.0.2
+const emailjs = require('@emailjs/nodejs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 // ========== CONFIGURACIÓN ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZURI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
 // Configuración EmailJS
@@ -29,11 +29,38 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json());
 
+// ========== INYECTAR SUPABASE EN LA APP ==========
+app.set('supabase', supabase);
+
 // ========== FUNCIONES AUXILIARES ==========
 function validarEmail(email) {
   if (!email) return false;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
+}
+
+function validarDNI(dni) {
+  const dniLimpio = dni.toString().trim().toUpperCase();
+  const letras = 'TRWAGMYFPDXBNJZSQVHLCKE';
+  const dniRegex = /^(\d{8})([A-Z])$/i;
+
+  const match = dniLimpio.match(dniRegex);
+  if (!match) return false;
+
+  const numero = parseInt(match[1], 10);
+  const letra = match[2].toUpperCase();
+  const letraCalculada = letras[numero % 23];
+
+  return letra === letraCalculada;
+}
+
+function limpiarTelefono(telefono) {
+  return telefono.toString().replace(/\D/g, '');
+}
+
+function validarTelefono(telefono) {
+  const telefonoLimpio = limpiarTelefono(telefono);
+  return /^\d{9,15}$/.test(telefonoLimpio);
 }
 
 // Función de EmailJS REAL
@@ -64,7 +91,6 @@ async function enviarEmailConfirmacion(reserva) {
 
     console.log('📤 Enviando email REAL a:', reserva.email);
     
-    // EmailJS v2.0.2 - sintaxis correcta
     const result = await emailjs.send(
       EMAILJS_SERVICE_ID,
       EMAILJS_TEMPLATE_ID,
@@ -165,17 +191,25 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// REGISTRO
+// REGISTRO - ✅ RUTA CORREGIDA CON LOS CAMPOS CORRECTOS
 app.post('/api/registro', async (req, res) => {
   try {
-    const { usuario, password, nombre, correo, dni } = req.body;
+    // ✅ USAR LOS CAMPOS EXACTOS QUE ENVÍA EL FRONTEND
+    const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
     
     console.log('📝 Registro attempt:', usuario);
+    console.log('📦 Datos recibidos:', { 
+      nombre, correo, usuario, dni, telefono, 
+      pass: pass ? '***' : 'FALTANTE', 
+      pass_2: pass_2 ? '***' : 'FALTANTE', 
+      clave_admin: clave_admin ? '***' : 'NO PROPORCIONADA' 
+    });
 
-    if (!usuario || !password || !nombre || !correo) {
+    // Validaciones básicas (usando los campos correctos)
+    if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
       return res.status(400).json({
         success: false,
-        error: 'Todos los campos son requeridos'
+        error: 'Por favor, rellena todos los campos obligatorios'
       });
     }
 
@@ -186,42 +220,98 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // Verificar si usuario existe
-    const { data: existingUser } = await supabase
-      .from('usuarios')
-      .select('usuario, correo')
-      .or(`usuario.eq.${usuario},correo.eq.${correo}`)
-      .single();
-
-    if (existingUser) {
+    // Validar DNI
+    if (!validarDNI(dni)) {
       return res.status(400).json({
         success: false,
-        error: existingUser.usuario === usuario ? 
-          'Usuario ya existe' : 'Email ya registrado'
+        error: 'DNI no válido. Formato correcto: 12345678X'
       });
     }
 
+    // Validar y limpiar teléfono (si se proporciona)
+    let telefonoLimpio = null;
+    if (telefono && telefono.trim() !== '') {
+      if (!validarTelefono(telefono)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Número de teléfono no válido. Debe contener entre 9 y 15 dígitos'
+        });
+      }
+      telefonoLimpio = limpiarTelefono(telefono);
+    }
+
+    // Validar contraseñas
+    if (pass !== pass_2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Las contraseñas no coinciden'
+      });
+    }
+
+    if (pass.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'La contraseña debe tener al menos 6 caracteres'
+      });
+    }
+
+    const rol = clave_admin === 'admin1234' ? 'admin' : 'user';
+
+    // Verificar duplicados
+    const { data: existingUser } = await supabase
+      .from('usuarios')
+      .select('usuario, correo, dni')
+      .or(`usuario.eq.${usuario},correo.eq.${correo},dni.eq.${dni}`);
+
+    if (existingUser && existingUser.length > 0) {
+      const userExists = existingUser.find(u => u.usuario === usuario);
+      const emailExists = existingUser.find(u => u.correo === correo);
+      const dniExists = existingUser.find(u => u.dni === dni);
+
+      if (userExists) {
+        return res.status(400).json({ success: false, error: 'El nombre de usuario ya está registrado' });
+      }
+      if (emailExists) {
+        return res.status(400).json({ success: false, error: 'El correo electrónico ya está registrado' });
+      }
+      if (dniExists) {
+        return res.status(400).json({ success: false, error: 'El DNI ya está registrado' });
+      }
+    }
+
     // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(pass, 10);
+
+    // Preparar datos del usuario
+    const datosUsuario = {
+      usuario,
+      password_hash: hashedPassword,
+      nombre,
+      correo,
+      dni,
+      rol,
+      fecha_creacion: new Date()
+    };
+
+    // Solo agregar teléfono si se proporcionó
+    if (telefonoLimpio) {
+      datosUsuario.telefono = telefonoLimpio;
+    }
 
     // Crear usuario
     const { data: newUser, error } = await supabase
       .from('usuarios')
-      .insert([
-        {
-          usuario,
-          password_hash: hashedPassword,
-          nombre,
-          correo,
-          dni: dni || null,
-          rol: 'user',
-          fecha_creacion: new Date()
-        }
-      ])
+      .insert([datosUsuario])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error Supabase:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al registrar el usuario en la base de datos'
+      });
+    }
 
     // Generar token
     const token = jwt.sign(
@@ -229,15 +319,18 @@ app.post('/api/registro', async (req, res) => {
         id: newUser.id, 
         usuario: newUser.usuario,
         nombre: newUser.nombre,
-        email: newUser.correo
+        email: newUser.correo,
+        rol: newUser.rol
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
+    console.log('✅ Usuario registrado exitosamente:', { id: newUser.id, usuario, rol });
+    
     res.json({
       success: true,
-      message: 'Usuario registrado exitosamente',
+      message: `Usuario registrado correctamente como ${rol}`,
       token: token,
       user: {
         id: newUser.id,
@@ -252,7 +345,7 @@ app.post('/api/registro', async (req, res) => {
     console.error('❌ Error en registro:', error);
     res.status(500).json({
       success: false,
-      error: 'Error interno del servidor'
+      error: 'Error interno del servidor: ' + error.message
     });
   }
 });
@@ -477,10 +570,9 @@ app.post('/api/reservas', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: '✅ Backend funcionando CON EmailJS v2.0.2',
+    message: '✅ Backend funcionando CON registro corregido',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    emailjs: '✅ Configurado'
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -508,32 +600,39 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// TEST EMAIL REAL
-app.get('/api/test-email', async (req, res) => {
+// TEST REGISTRO
+app.get('/api/test-registro', async (req, res) => {
   try {
-    const testReserva = {
-      id: Math.floor(Math.random() * 1000),
-      email: 'alvaroramirezm8@gmail.com',
-      nombre_usuario: 'Usuario Test',
-      polideportivo_nombre: 'Polideportivo Central',
-      pista_nombre: 'Pista de Fútbol 1',
-      fecha: new Date('2024-12-15'),
-      hora_inicio: '10:00',
-      hora_fin: '11:00',
-      precio: '25.00'
+    const testData = {
+      nombre: 'Usuario Test',
+      correo: `test${Date.now()}@test.com`,
+      usuario: `testuser${Date.now()}`,
+      dni: '12345678Z',
+      pass: '123456',
+      pass_2: '123456',
+      telefono: '123456789'
     };
 
-    const result = await enviarEmailConfirmacion(testReserva);
-    
-    res.json({ 
-      success: true, 
-      message: '✅ Email enviado correctamente con EmailJS v2.0.2',
-      result: result
+    const response = await supabase
+      .from('usuarios')
+      .insert([{
+        ...testData,
+        password_hash: await bcrypt.hash(testData.pass, 10),
+        rol: 'user',
+        fecha_creacion: new Date()
+      }])
+      .select()
+      .single();
+
+    res.json({
+      success: true,
+      message: '✅ Test de registro exitoso',
+      user: response.data
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message
+    res.status(500).json({
+      success: false,
+      error: 'Error en test de registro: ' + error.message
     });
   }
 });
@@ -584,9 +683,9 @@ app.listen(PORT, () => {
   console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Login: http://localhost:${PORT}/api/login`);
-  console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
+  console.log(`📝 Registro: http://localhost:${PORT}/api/registro`);
+  console.log(`🧪 Test Registro: http://localhost:${PORT}/api/test-registro`);
   console.log(`🗄️  Supabase: ${supabaseUrl}`);
-  console.log(`📧 EmailJS: v2.0.2 CONFIGURADO`);
   console.log(`🔐 CORS: PERMITIENDO TODOS LOS ORÍGENES`);
 });
 
