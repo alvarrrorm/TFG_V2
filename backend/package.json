@@ -1,30 +1,17 @@
 {
-  "name": "backend",
-  "version": "1.0.0",
-  "description": "",
+  "name": "backend-polideportivo",
+  "version": "1.0.0", 
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "@emailjs/nodejs": "^5.0.2",
-    "@react-native-community/datetimepicker": "^8.3.0",
-    "@react-native-picker/picker": "2.9.0",
-    "bcrypt": "^5.1.1",
-    "bcryptjs": "^3.0.2",
-    "body-parser": "^2.2.0",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^5.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mysql": "^2.18.1",
-    "mysql2": "^3.14.3",
-    "nodemailer": "^7.0.10",
-    "react-native-vector-icons": "^10.2.0"
+    "@supabase/supabase-js": "^2.84.0",
+    "jsonwebtoken": "^9.0.2", 
+    "bcryptjs": "^2.4.3",
+    "@emailjs/nodejs": "^1.1.0"
   }
 }

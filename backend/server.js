@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const emailjs = require('@emailjs/nodejs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -16,11 +15,14 @@ const app = express();
 // ========== MIDDLEWARE ==========
 // CORS MUY PERMISIVO - SOLUCIÓN DEFINITIVA
 app.use(cors({
-  origin: true, // PERMITE TODOS LOS ORÍGENES
+  origin: '*', // PERMITE TODOS LOS ORÍGENES (usa '*' en lugar de true)
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true
 }));
+
+// Manejar preflight requests explícitamente
+app.options('*', cors());
 
 app.use(express.json());
 
@@ -31,38 +33,28 @@ function validarEmail(email) {
   return emailRegex.test(email);
 }
 
+// Función de email SIMULADA (sin EmailJS por ahora)
 async function enviarEmailConfirmacion(reserva) {
   try {
     if (!reserva.email || !validarEmail(reserva.email)) {
       throw new Error(`Email inválido: "${reserva.email}"`);
     }
 
-    const templateParams = {
-      to_email: reserva.email,
-      to_name: reserva.nombre_usuario,
-      reserva_id: reserva.id,
-      polideportivo_nombre: reserva.polideportivo_nombre,
-      pista_nombre: reserva.pista_nombre,
-      fecha: new Date(reserva.fecha).toLocaleDateString('es-ES'),
+    console.log('📧 SIMULANDO envío de email a:', reserva.email);
+    console.log('📋 Detalles reserva:', {
+      usuario: reserva.nombre_usuario,
+      polideportivo: reserva.polideportivo_nombre,
+      pista: reserva.pista_nombre,
+      fecha: reserva.fecha,
       horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
-      precio: `${reserva.precio} €`,
-      from_name: 'Polideportivo App'
-    };
+      precio: reserva.precio
+    });
 
-    const result = await emailjs.send(
-      'service_lb9lbhi',
-      'template_hfuxqzm',
-      templateParams,
-      {
-        publicKey: 'cm8peTJ9deE4bwUrS',
-        privateKey: 'Td3FXR8CwPdKsuyIuwPF_',
-      }
-    );
-
-    console.log('✅ Email enviado a:', reserva.email);
-    return result;
+    // Simular éxito (reemplazar con EmailJS real cuando esté configurado)
+    return { success: true, simulated: true, message: 'Email simulado correctamente' };
+    
   } catch (error) {
-    console.error('❌ Error enviando email:', error);
+    console.error('❌ Error en email simulado:', error);
     throw error;
   }
 }
@@ -426,7 +418,7 @@ app.post('/api/reservas', async (req, res) => {
 
     console.log('✅ Reserva creada:', nuevaReserva.id);
 
-    // Enviar email
+    // Enviar email (simulado por ahora)
     try {
       const reservaConEmail = {
         ...nuevaReserva,
@@ -489,7 +481,7 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// TEST EMAIL
+// TEST EMAIL (SIMULADO)
 app.get('/api/test-email', async (req, res) => {
   try {
     const testReserva = {
@@ -508,7 +500,7 @@ app.get('/api/test-email', async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: '✅ Email enviado correctamente'
+      message: '✅ Email simulado correctamente'
     });
   } catch (error) {
     res.status(500).json({ 
