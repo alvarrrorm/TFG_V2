@@ -12,6 +12,6 @@
     "@supabase/supabase-js": "^2.84.0",
     "jsonwebtoken": "^9.0.2", 
     "bcryptjs": "^2.4.3",
-    "@emailjs/nodejs": "^1.1.0"
+    "@emailjs/nodejs": "^3.2.2"
   }
 }

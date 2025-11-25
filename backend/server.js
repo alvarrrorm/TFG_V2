@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const emailjs = require('@emailjs/nodejs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -9,21 +10,23 @@ const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.su
 const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9pZWpoaGtnZ25tcXJ1YnlwdnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzY0OTUsImV4cCI6MjA3OTU1MjQ5NX0.ZDrmA-jkADMH0CPrtm14IZkPEChTLvSxJ8BM2roC8A0';
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
+// Configuración EmailJS
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || 'cm8peTJ9deE4bwUrS';
+const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || 'Td3FXR8CwPdKsuyIuwPF_';
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_lb9lbhi';
+const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || 'template_hfuxqzm';
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 const app = express();
 
 // ========== MIDDLEWARE ==========
-// CORS MUY PERMISIVO - SOLUCIÓN DEFINITIVA
 app.use(cors({
-  origin: '*', // PERMITE TODOS LOS ORÍGENES (usa '*' en lugar de true)
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true
 }));
-
-// Manejar preflight requests explícitamente
 app.options('*', cors());
-
 app.use(express.json());
 
 // ========== FUNCIONES AUXILIARES ==========
@@ -33,28 +36,49 @@ function validarEmail(email) {
   return emailRegex.test(email);
 }
 
-// Función de email SIMULADA (sin EmailJS por ahora)
+// Función de EmailJS REAL
 async function enviarEmailConfirmacion(reserva) {
   try {
     if (!reserva.email || !validarEmail(reserva.email)) {
       throw new Error(`Email inválido: "${reserva.email}"`);
     }
 
-    console.log('📧 SIMULANDO envío de email a:', reserva.email);
-    console.log('📋 Detalles reserva:', {
-      usuario: reserva.nombre_usuario,
-      polideportivo: reserva.polideportivo_nombre,
-      pista: reserva.pista_nombre,
-      fecha: reserva.fecha,
-      horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
-      precio: reserva.precio
+    const fechaFormateada = new Date(reserva.fecha).toLocaleDateString('es-ES', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     });
 
-    // Simular éxito (reemplazar con EmailJS real cuando esté configurado)
-    return { success: true, simulated: true, message: 'Email simulado correctamente' };
+    const templateParams = {
+      to_email: reserva.email,
+      to_name: reserva.nombre_usuario,
+      reserva_id: reserva.id,
+      polideportivo_nombre: reserva.polideportivo_nombre,
+      pista_nombre: reserva.pista_nombre,
+      fecha: fechaFormateada,
+      horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
+      precio: `${reserva.precio} €`,
+      from_name: 'Polideportivo App'
+    };
+
+    console.log('📤 Enviando email REAL a:', reserva.email);
     
+    const result = await emailjs.send(
+      EMAILJS_SERVICE_ID,
+      EMAILJS_TEMPLATE_ID,
+      templateParams,
+      {
+        publicKey: EMAILJS_PUBLIC_KEY,
+        privateKey: EMAILJS_PRIVATE_KEY,
+      }
+    );
+
+    console.log('✅ Email enviado correctamente con EmailJS');
+    return result;
+
   } catch (error) {
-    console.error('❌ Error en email simulado:', error);
+    console.error('❌ Error enviando email con EmailJS:', error);
     throw error;
   }
 }
@@ -418,7 +442,7 @@ app.post('/api/reservas', async (req, res) => {
 
     console.log('✅ Reserva creada:', nuevaReserva.id);
 
-    // Enviar email (simulado por ahora)
+    // Enviar email CON EMAILJS REAL
     try {
       const reservaConEmail = {
         ...nuevaReserva,
@@ -426,8 +450,9 @@ app.post('/api/reservas', async (req, res) => {
         nombre_usuario: usuario.nombre
       };
       await enviarEmailConfirmacion(reservaConEmail);
+      console.log('📧 Email de confirmación enviado con EmailJS');
     } catch (emailError) {
-      console.error('❌ Error email (reserva igual creada):', emailError);
+      console.error('❌ Error enviando email (reserva igual creada):', emailError);
     }
 
     res.json({
@@ -451,9 +476,10 @@ app.post('/api/reservas', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: '✅ Backend funcionando',
+    message: '✅ Backend funcionando CON EmailJS',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    emailjs: '✅ Configurado'
   });
 });
 
@@ -481,12 +507,12 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// TEST EMAIL (SIMULADO)
+// TEST EMAIL REAL
 app.get('/api/test-email', async (req, res) => {
   try {
     const testReserva = {
       id: Math.floor(Math.random() * 1000),
-      email: 'test@example.com',
+      email: 'alvaroramirezm8@gmail.com',
       nombre_usuario: 'Usuario Test',
       polideportivo_nombre: 'Polideportivo Central',
       pista_nombre: 'Pista de Fútbol 1',
@@ -496,11 +522,12 @@ app.get('/api/test-email', async (req, res) => {
       precio: '25.00'
     };
 
-    await enviarEmailConfirmacion(testReserva);
+    const result = await enviarEmailConfirmacion(testReserva);
     
     res.json({ 
       success: true, 
-      message: '✅ Email simulado correctamente'
+      message: '✅ Email enviado correctamente con EmailJS REAL',
+      result: result
     });
   } catch (error) {
     res.status(500).json({ 
@@ -558,6 +585,7 @@ app.listen(PORT, () => {
   console.log(`🔐 Login: http://localhost:${PORT}/api/login`);
   console.log(`📧 Test Email: http://localhost:${PORT}/api/test-email`);
   console.log(`🗄️  Supabase: ${supabaseUrl}`);
+  console.log(`📧 EmailJS: CONFIGURADO`);
   console.log(`🔐 CORS: PERMITIENDO TODOS LOS ORÍGENES`);
 });
 
