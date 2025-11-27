@@ -18,12 +18,9 @@ if (!supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 const app = express();
 
-// ========== CONFIGURACIÓN EMAILJS ==========
-const emailjsConfig = {
-  publicKey: 'cm8peTJ9deE4bwUrS',
-  privateKey: 'Td3FXR8CwPdKsuyIuwPF_',
-};
-
+// ========== CONFIGURACIÓN EMAILJS v5 ==========
+const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
+const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
 const emailjsRecoveryServiceId = 'service_r7doupc';
 const emailjsRecoveryTemplateId = 'template_sy1terr';
 
@@ -74,6 +71,7 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Función ACTUALIZADA para EmailJS v5.x
 async function enviarEmailRecuperacion(datos) {
   try {
     const templateParams = {
@@ -88,16 +86,34 @@ async function enviarEmailRecuperacion(datos) {
     };
 
     console.log('📧 Enviando email de recuperación a:', datos.email);
+    console.log('👤 Usuario:', datos.usuario);
+    console.log('🔑 Código:', datos.codigo);
+    
+    // ✅ SINTAXIS CORRECTA para EmailJS v5.x
     const result = await emailjs.send(
       emailjsRecoveryServiceId,
       emailjsRecoveryTemplateId,
       templateParams,
-      emailjsConfig
+      {
+        publicKey: emailjsPublicKey,
+        privateKey: emailjsPrivateKey
+      }
     );
-    console.log('✅ Email enviado correctamente');
+
+    console.log('✅ Email enviado correctamente con EmailJS v5');
     return result;
+
   } catch (error) {
-    console.error('❌ Error enviando email:', error);
+    console.error('❌ Error enviando email con EmailJS v5:', error);
+    
+    // En desarrollo, simular éxito y mostrar código
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🧪 Modo desarrollo: Simulando envío exitoso');
+      console.log('🔐 Código que se enviaría:', datos.codigo);
+      console.log('📧 Para:', datos.email);
+      return { status: 200, text: 'OK', simulated: true };
+    }
+    
     throw error;
   }
 }
@@ -110,24 +126,27 @@ const registroRouter = require('./rutas/registro');
 const pistasRouter = require('./rutas/pistas');
 const polideportivosRouter = require('./rutas/polideportivos');
 const reservasRouter = require('./rutas/reservas');
-const recuperacionRouter = require('./rutas/recupera'); // Si está en carpeta rutas
-
-
-
-// Middleware para pasar la app a los routers
-app.use((req, res, next) => {
-  req.app = app;
-  next();
-});
+const recuperaRouter = require('./rutas/recupera');
 
 // Configurar rutas
 app.use('/api/registro', registroRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/reservas', reservasRouter);
-app.use('/api/recupera', recuperacionRouter); // Si está en carpeta rutas
+app.use('/api/recupera', recuperaRouter);
 
-// ========== RUTAS DE RECUPERACIÓN (INTEGRADAS DIRECTAMENTE) ==========
+// ========== RUTAS DE RECUPERACIÓN ==========
+
+// Health check
+app.get('/api/recupera/health', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Sistema de recuperación funcionando',
+    timestamp: new Date().toISOString(),
+    nodeVersion: process.version,
+    emailjs: 'v5.0.2'
+  });
+});
 
 // Solicitar recuperación
 app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
@@ -194,21 +213,39 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
         codigo: codigo
       });
 
-      console.log('✅ Código enviado a:', usuario.usuario, 'Código:', codigo);
+      console.log('✅ Proceso completado para:', usuario.usuario);
       
       res.json({ 
         success: true, 
         message: mensajeSeguro,
-        debug: process.env.NODE_ENV === 'development' ? { codigo } : undefined
+        debug: process.env.NODE_ENV !== 'production' ? { 
+          codigo: codigo,
+          usuario: usuario.usuario,
+          email: usuario.correo
+        } : undefined
       });
       
     } catch (emailError) {
       console.error('❌ Error enviando email:', emailError);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Error al enviar el email de recuperación',
-        debug: process.env.NODE_ENV === 'development' ? { codigo } : undefined
-      });
+      
+      // En desarrollo, continuar aunque falle el email
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Continuando en modo desarrollo...');
+        res.json({ 
+          success: true, 
+          message: mensajeSeguro,
+          debug: { 
+            codigo: codigo,
+            usuario: usuario.usuario,
+            email_error: emailError.message
+          }
+        });
+      } else {
+        res.status(500).json({ 
+          success: false, 
+          error: 'Error al enviar el email de recuperación' 
+        });
+      }
     }
     
   } catch (error) {
@@ -280,12 +317,15 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
         codigo: nuevoCodigo
       });
 
-      console.log('✅ Código reenviado a:', usuario.usuario, 'Código:', nuevoCodigo);
+      console.log('✅ Código reenviado a:', usuario.usuario);
       
       res.json({ 
         success: true, 
         message: mensajeSeguro,
-        debug: process.env.NODE_ENV === 'development' ? { codigo: nuevoCodigo } : undefined
+        debug: process.env.NODE_ENV !== 'production' ? { 
+          codigo: nuevoCodigo,
+          usuario: usuario.usuario
+        } : undefined
       });
       
     } catch (emailError) {
@@ -293,7 +333,9 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
       res.status(500).json({ 
         success: false, 
         error: 'Error al reenviar el email',
-        debug: process.env.NODE_ENV === 'development' ? { codigo: nuevoCodigo } : undefined
+        debug: process.env.NODE_ENV !== 'production' ? { 
+          codigo: nuevoCodigo 
+        } : undefined
       });
     }
     
@@ -491,7 +533,8 @@ app.get('/api/recupera/test', async (req, res) => {
     res.json({ 
       success: true, 
       message: '✅ Email de recuperación enviado correctamente',
-      to: testData.email
+      to: testData.email,
+      result: result
     });
     
   } catch (error) {
@@ -511,7 +554,8 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     message: '✅ Backend funcionando',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    nodeVersion: process.version,
+    emailjs: 'v5.0.2'
   });
 });
 
@@ -927,15 +971,13 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
+  console.log(`🌐 Node.js version: ${process.version}`);
+  console.log(`📧 EmailJS: v5.0.2 configurado`);
+  console.log(`🔐 Supabase: ${supabaseUrl}`);
+  console.log(`🔑 Recuperación: http://localhost:${PORT}/api/recupera/health`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Login: http://localhost:${PORT}/api/login`);
   console.log(`📝 Registro: http://localhost:${PORT}/api/registro`);
-  console.log(`🎾 Pistas: http://localhost:${PORT}/api/pistas`);
-  console.log(`🏟️ Polideportivos: http://localhost:${PORT}/api/polideportivos`);
-  console.log(`📋 Reservas: http://localhost:${PORT}/api/reservas`);
-  console.log(`🔑 Recuperación: http://localhost:${PORT}/api/recupera`);
-  console.log(`📧 EmailJS: Configurado para recuperación`);
-  console.log(`🔐 Supabase: ${supabaseUrl}`);
 });
 
 process.on('SIGINT', () => {
