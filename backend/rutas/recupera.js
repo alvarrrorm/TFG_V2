@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const emailjs = require('@emailjs/nodejs');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 // Configuración de EmailJS para recuperación
 const emailjsConfig = {
