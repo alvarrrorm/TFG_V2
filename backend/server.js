@@ -106,10 +106,13 @@ async function enviarEmailRecuperacion(datos) {
 app.set('supabase', supabase);
 
 // ========== CONFIGURAR RUTAS ==========
-const registroRouter = require('./routes/registro');
-const pistasRouter = require('./routes/pistas');
-const polideportivosRouter = require('./routes/polideportivos');
-const reservasRouter = require('./routes/reservas');
+const registroRouter = require('./rutas/registro');
+const pistasRouter = require('./rutas/pistas');
+const polideportivosRouter = require('./rutas/polideportivos');
+const reservasRouter = require('./rutas/reservas');
+const recuperacionRouter = require('./rutas/recuperacion'); // Si está en carpeta rutas
+
+
 
 // Middleware para pasar la app a los routers
 app.use((req, res, next) => {
@@ -122,6 +125,7 @@ app.use('/api/registro', registroRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/reservas', reservasRouter);
+app.use('/api/recupera', recuperacionRouter); // Si está en carpeta rutas
 
 // ========== RUTAS DE RECUPERACIÓN (INTEGRADAS DIRECTAMENTE) ==========
 
