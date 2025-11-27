@@ -3,6 +3,7 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const emailjs = require('@emailjs/nodejs');
 
 // ========== CONFIGURACIÓN ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
@@ -16,6 +17,15 @@ if (!supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 const app = express();
+
+// ========== CONFIGURACIÓN EMAILJS ==========
+const emailjsConfig = {
+  publicKey: 'cm8peTJ9deE4bwUrS',
+  privateKey: 'Td3FXR8CwPdKsuyIuwPF_',
+};
+
+const emailjsRecoveryServiceId = 'service_r7doupc';
+const emailjsRecoveryTemplateId = 'template_sy1terr';
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
@@ -60,15 +70,47 @@ function validarTelefono(telefono) {
   return /^\d{9,15}$/.test(telefonoLimpio);
 }
 
+function generarCodigo() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function enviarEmailRecuperacion(datos) {
+  try {
+    const templateParams = {
+      user_name: datos.nombre_usuario || 'Usuario',
+      user_username: datos.usuario || 'Usuario',
+      verification_code: datos.codigo,
+      app_name: 'Depo',
+      expiration_time: '15 minutos',
+      support_email: 'soporte@depo.com',
+      current_year: new Date().getFullYear(),
+      to_email: datos.email
+    };
+
+    console.log('📧 Enviando email de recuperación a:', datos.email);
+    const result = await emailjs.send(
+      emailjsRecoveryServiceId,
+      emailjsRecoveryTemplateId,
+      templateParams,
+      emailjsConfig
+    );
+    console.log('✅ Email enviado correctamente');
+    return result;
+  } catch (error) {
+    console.error('❌ Error enviando email:', error);
+    throw error;
+  }
+}
+
 // ========== INYECTAR SUPABASE EN LA APP ==========
 app.set('supabase', supabase);
 
 // ========== CONFIGURAR RUTAS ==========
-const registroRouter = require('./rutas/registro');
-const pistasRouter = require('./rutas/pistas');
-const polideportivosRouter = require('./rutas/polideportivos');
-const reservasRouter = require('./rutas/reservas');
-const recuperacionRouter = require('./rutas/recuperacion');
+const registroRouter = require('./routes/registro');
+const pistasRouter = require('./routes/pistas');
+const polideportivosRouter = require('./routes/polideportivos');
+const reservasRouter = require('./routes/reservas');
+
 // Middleware para pasar la app a los routers
 app.use((req, res, next) => {
   req.app = app;
@@ -80,7 +122,382 @@ app.use('/api/registro', registroRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/reservas', reservasRouter);
-app.use('/api/recupera', recuperacionRouter); // ← Y esta línea también
+
+// ========== RUTAS DE RECUPERACIÓN (INTEGRADAS DIRECTAMENTE) ==========
+
+// Solicitar recuperación
+app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
+  try {
+    const { email } = req.body;
+    console.log('🔐 Solicitud de recuperación para:', email);
+
+    if (!email || !validarEmail(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Por favor, proporciona un email válido' 
+      });
+    }
+
+    // Buscar usuario
+    const { data: usuarios, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo, usuario')
+      .eq('correo', email)
+      .limit(1);
+
+    if (userError) {
+      console.error('❌ Error en BD:', userError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
+
+    if (!usuarios || usuarios.length === 0) {
+      console.log('📧 Email no encontrado:', email);
+      return res.json({ 
+        success: true, 
+        message: mensajeSeguro
+      });
+    }
+
+    const usuario = usuarios[0];
+    const codigo = generarCodigo();
+    
+    // Guardar código en BD
+    const { error: insertError } = await supabase
+      .from('recuperacion_password')
+      .insert([{
+        email: email,
+        codigo: codigo,
+        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        user_id: usuario.id,
+        user_username: usuario.usuario
+      }]);
+
+    if (insertError) {
+      console.error('❌ Error guardando código:', insertError);
+    }
+
+    // Enviar email
+    try {
+      await enviarEmailRecuperacion({
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre,
+        usuario: usuario.usuario,
+        codigo: codigo
+      });
+
+      console.log('✅ Código enviado a:', usuario.usuario, 'Código:', codigo);
+      
+      res.json({ 
+        success: true, 
+        message: mensajeSeguro,
+        debug: process.env.NODE_ENV === 'development' ? { codigo } : undefined
+      });
+      
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al enviar el email de recuperación',
+        debug: process.env.NODE_ENV === 'development' ? { codigo } : undefined
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error en recuperación:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Reenviar código
+app.post('/api/recupera/reenviar-codigo', async (req, res) => {
+  try {
+    const { email } = req.body;
+    console.log('🔄 Reenviando código para:', email);
+
+    if (!email || !validarEmail(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Por favor, proporciona un email válido' 
+      });
+    }
+
+    // Buscar usuario
+    const { data: usuarios, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, nombre, correo, usuario')
+      .eq('correo', email)
+      .limit(1);
+
+    if (userError) {
+      console.error('❌ Error en BD:', userError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
+
+    if (!usuarios || usuarios.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: mensajeSeguro
+      });
+    }
+
+    const usuario = usuarios[0];
+    const nuevoCodigo = generarCodigo();
+    
+    // Guardar nuevo código
+    await supabase
+      .from('recuperacion_password')
+      .insert([{
+        email: email,
+        codigo: nuevoCodigo,
+        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        user_id: usuario.id,
+        user_username: usuario.usuario
+      }]);
+
+    // Enviar email
+    try {
+      await enviarEmailRecuperacion({
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre,
+        usuario: usuario.usuario,
+        codigo: nuevoCodigo
+      });
+
+      console.log('✅ Código reenviado a:', usuario.usuario, 'Código:', nuevoCodigo);
+      
+      res.json({ 
+        success: true, 
+        message: mensajeSeguro,
+        debug: process.env.NODE_ENV === 'development' ? { codigo: nuevoCodigo } : undefined
+      });
+      
+    } catch (emailError) {
+      console.error('❌ Error reenviando email:', emailError);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al reenviar el email',
+        debug: process.env.NODE_ENV === 'development' ? { codigo: nuevoCodigo } : undefined
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error reenviando código:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Verificar código
+app.post('/api/recupera/verificar-codigo', async (req, res) => {
+  try {
+    const { email, codigo } = req.body;
+    console.log('🔍 Verificando código:', codigo, 'para:', email);
+
+    if (!email || !codigo) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email y código son requeridos' 
+      });
+    }
+
+    // Verificar código
+    const { data: recuperaciones, error } = await supabase
+      .from('recuperacion_password')
+      .select('*')
+      .eq('email', email)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expiracion', new Date().toISOString())
+      .limit(1);
+
+    if (error) {
+      console.error('❌ Error verificando código:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    if (!recuperaciones || recuperaciones.length === 0) {
+      console.log('❌ Código inválido para:', email);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido, expirado o ya utilizado' 
+      });
+    }
+
+    const recuperacion = recuperaciones[0];
+    
+    // Obtener info del usuario
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('usuario, nombre')
+      .eq('id', recuperacion.user_id)
+      .single();
+
+    console.log('✅ Código verificado para:', usuario?.usuario);
+
+    res.json({ 
+      success: true, 
+      message: 'Código verificado correctamente',
+      valido: true,
+      usuario: {
+        username: usuario?.usuario,
+        nombre: usuario?.nombre
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error verificando código:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Cambiar contraseña
+app.post('/api/recupera/cambiar-password', async (req, res) => {
+  try {
+    const { email, codigo, nuevaPassword } = req.body;
+    console.log('🔄 Cambiando password para:', email);
+
+    if (!email || !codigo || !nuevaPassword) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Todos los campos son requeridos' 
+      });
+    }
+
+    if (nuevaPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La contraseña debe tener al menos 6 caracteres' 
+      });
+    }
+
+    // Verificar código
+    const { data: recuperaciones, error: verificarError } = await supabase
+      .from('recuperacion_password')
+      .select('*')
+      .eq('email', email)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expiracion', new Date().toISOString())
+      .limit(1);
+
+    if (verificarError) {
+      console.error('❌ Error verificando código:', verificarError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    if (!recuperaciones || recuperaciones.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido o expirado' 
+      });
+    }
+
+    const recuperacion = recuperaciones[0];
+    
+    // Encriptar nueva contraseña
+    const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
+    
+    // Actualizar contraseña
+    const { error: updateError } = await supabase
+      .from('usuarios')
+      .update({ pass: hashedPassword })
+      .eq('id', recuperacion.user_id);
+
+    if (updateError) {
+      console.error('❌ Error actualizando contraseña:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al cambiar la contraseña' 
+      });
+    }
+
+    // Marcar código como usado
+    await supabase
+      .from('recuperacion_password')
+      .update({ usado: true })
+      .eq('email', email)
+      .eq('codigo', codigo);
+
+    // Obtener info del usuario
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('usuario, nombre')
+      .eq('id', recuperacion.user_id)
+      .single();
+
+    console.log('✅ Contraseña cambiada para:', usuario?.usuario);
+
+    res.json({ 
+      success: true, 
+      message: 'Contraseña cambiada exitosamente',
+      actualizado: true,
+      usuario: {
+        username: usuario?.usuario,
+        nombre: usuario?.nombre
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error cambiando password:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Test de recuperación
+app.get('/api/recupera/test', async (req, res) => {
+  try {
+    const testData = {
+      email: 'alvaroramirezm8@gmail.com',
+      nombre_usuario: 'Alvaro Ramirez',
+      usuario: 'alvarorm8',
+      codigo: '123456'
+    };
+
+    console.log('🧪 Probando email de recuperación...');
+    
+    const result = await enviarEmailRecuperacion(testData);
+    
+    res.json({ 
+      success: true, 
+      message: '✅ Email de recuperación enviado correctamente',
+      to: testData.email
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en test:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // ========== RUTAS BÁSICAS ==========
 
@@ -111,7 +528,8 @@ app.get('/api/test-supabase', async (req, res) => {
         usuarios: '✅ Accesible',
         polideportivos: '✅ Accesible',
         pistas: '✅ Accesible',
-        reservas: '✅ Accesible'
+        reservas: '✅ Accesible',
+        recuperacion_password: '✅ Accesible'
       }
     });
   } catch (error) {
@@ -129,13 +547,6 @@ app.post('/api/registro', async (req, res) => {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
     
     console.log('📝 Registro attempt:', usuario);
-    console.log('📦 Datos recibidos:', { 
-      nombre, correo, usuario, dni, 
-      telefono: telefono || 'No proporcionado',
-      pass: pass ? '***' : 'FALTANTE', 
-      pass_2: pass_2 ? '***' : 'FALTANTE', 
-      clave_admin: clave_admin ? '***' : 'No proporcionada' 
-    });
 
     // Validaciones básicas
     if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
@@ -373,45 +784,9 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// RECUPERACIÓN CONTRASEÑA
-app.post('/api/recupera', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    console.log('🔑 Recuperación para:', email);
-    
-    if (!email || !validarEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email válido requerido'
-      });
-    }
+// ========== RUTAS DE DATOS BÁSICAS ==========
 
-    // Buscar usuario
-    const { data: user } = await supabase
-      .from('usuarios')
-      .select('id, usuario, nombre, correo')
-      .eq('correo', email)
-      .single();
-
-    // Por seguridad, siempre devolver éxito
-    res.json({
-      success: true,
-      message: 'Si el email existe, recibirás instrucciones'
-    });
-
-  } catch (error) {
-    console.error('❌ Error en recuperación:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
-// ========== RUTAS DE DATOS BÁSICAS (PARA COMPATIBILIDAD) ==========
-
-// POLIDEPORTIVOS - Ruta básica para compatibilidad
+// POLIDEPORTIVOS
 app.get('/api/polideportivos', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -433,7 +808,7 @@ app.get('/api/polideportivos', async (req, res) => {
   }
 });
 
-// PISTAS - Ruta básica para compatibilidad
+// PISTAS
 app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
@@ -460,7 +835,7 @@ app.get('/api/pistas', async (req, res) => {
   }
 });
 
-// RESERVAS - GET - Ruta básica para compatibilidad
+// RESERVAS - GET
 app.get('/api/reservas', async (req, res) => {
   try {
     const { usuario_id, fecha } = req.query;
@@ -544,7 +919,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-
 // ========== INICIAR SERVIDOR ==========
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
@@ -555,8 +929,9 @@ app.listen(PORT, () => {
   console.log(`🎾 Pistas: http://localhost:${PORT}/api/pistas`);
   console.log(`🏟️ Polideportivos: http://localhost:${PORT}/api/polideportivos`);
   console.log(`📋 Reservas: http://localhost:${PORT}/api/reservas`);
-  console.log(`🔑 Supabase: ${supabaseUrl}`);
-  console.log(`🔐 CORS: PERMITIENDO TODOS LOS ORÍGENES`);
+  console.log(`🔑 Recuperación: http://localhost:${PORT}/api/recupera`);
+  console.log(`📧 EmailJS: Configurado para recuperación`);
+  console.log(`🔐 Supabase: ${supabaseUrl}`);
 });
 
 process.on('SIGINT', () => {
