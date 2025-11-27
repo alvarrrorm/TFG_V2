@@ -110,7 +110,7 @@ const registroRouter = require('./rutas/registro');
 const pistasRouter = require('./rutas/pistas');
 const polideportivosRouter = require('./rutas/polideportivos');
 const reservasRouter = require('./rutas/reservas');
-const recuperacionRouter = require('./rutas/recuperacion'); // Si está en carpeta rutas
+const recuperacionRouter = require('./rutas/recupera'); // Si está en carpeta rutas
 
 
 
