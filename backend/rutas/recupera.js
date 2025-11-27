@@ -32,50 +32,48 @@ async function encriptarPassword(password) {
 }
 
 // Función para enviar email de recuperación
-function enviarEmailRecuperacionPassword(datosRecuperacion) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // Validar datos requeridos
-      if (!datosRecuperacion.email || !validarEmail(datosRecuperacion.email)) {
-        throw new Error(`Email inválido para recuperación: "${datosRecuperacion.email}"`);
-      }
-
-      if (!datosRecuperacion.codigo) {
-        throw new Error('Código de verificación requerido');
-      }
-
-      // Datos para la plantilla de recuperación
-      const templateParams = {
-        user_name: datosRecuperacion.nombre_usuario || 'Usuario',
-        user_username: datosRecuperacion.usuario || 'Usuario',
-        verification_code: datosRecuperacion.codigo,
-        app_name: 'Depo',
-        expiration_time: '15 minutos',
-        support_email: 'soporte@depo.com',
-        current_year: new Date().getFullYear(),
-        to_email: datosRecuperacion.email
-      };
-
-      console.log('🔐 Enviando email de recuperación a:', datosRecuperacion.email);
-      console.log('👤 Usuario:', datosRecuperacion.usuario);
-      console.log('📝 Código de verificación:', datosRecuperacion.codigo);
-      
-      // Enviar email con EmailJS
-      const result = await emailjs.send(
-        emailjsRecoveryServiceId,
-        emailjsRecoveryTemplateId,
-        templateParams,
-        emailjsConfig
-      );
-
-      console.log('✅ Email de recuperación enviado con EmailJS');
-      resolve(result);
-
-    } catch (error) {
-      console.error('❌ Error enviando email de recuperación:', error);
-      reject(error);
+async function enviarEmailRecuperacionPassword(datosRecuperacion) {
+  try {
+    // Validar datos requeridos
+    if (!datosRecuperacion.email || !validarEmail(datosRecuperacion.email)) {
+      throw new Error(`Email inválido para recuperación: "${datosRecuperacion.email}"`);
     }
-  });
+
+    if (!datosRecuperacion.codigo) {
+      throw new Error('Código de verificación requerido');
+    }
+
+    // Datos para la plantilla de recuperación
+    const templateParams = {
+      user_name: datosRecuperacion.nombre_usuario || 'Usuario',
+      user_username: datosRecuperacion.usuario || 'Usuario',
+      verification_code: datosRecuperacion.codigo,
+      app_name: 'Depo',
+      expiration_time: '15 minutos',
+      support_email: 'soporte@depo.com',
+      current_year: new Date().getFullYear(),
+      to_email: datosRecuperacion.email
+    };
+
+    console.log('🔐 Enviando email de recuperación a:', datosRecuperacion.email);
+    console.log('👤 Usuario:', datosRecuperacion.usuario);
+    console.log('📝 Código de verificación:', datosRecuperacion.codigo);
+    
+    // Enviar email con EmailJS
+    const result = await emailjs.send(
+      emailjsRecoveryServiceId,
+      emailjsRecoveryTemplateId,
+      templateParams,
+      emailjsConfig
+    );
+
+    console.log('✅ Email de recuperación enviado con EmailJS');
+    return result;
+
+  } catch (error) {
+    console.error('❌ Error enviando email de recuperación:', error);
+    throw error;
+  }
 }
 
 // Generar código de 6 dígitos
@@ -83,11 +81,24 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Middleware para obtener supabase
+router.use((req, res, next) => {
+  req.supabase = req.app.get('supabase');
+  if (!req.supabase) {
+    console.error('❌ Supabase no configurado en la app');
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error de configuración del servidor' 
+    });
+  }
+  next();
+});
+
 // Ruta para solicitar recuperación de contraseña
 router.post('/solicitar-recuperacion', async (req, res) => {
   try {
     const { email } = req.body;
-    const supabase = req.app.get('supabase');
+    const supabase = req.supabase;
 
     console.log('🔐 Solicitud de recuperación para:', email);
 
@@ -204,7 +215,7 @@ router.post('/solicitar-recuperacion', async (req, res) => {
 router.post('/reenviar-codigo', async (req, res) => {
   try {
     const { email } = req.body;
-    const supabase = req.app.get('supabase');
+    const supabase = req.supabase;
 
     console.log('🔄 Reenviando código para:', email);
 
@@ -310,9 +321,9 @@ router.post('/reenviar-codigo', async (req, res) => {
 router.post('/verificar-codigo', async (req, res) => {
   try {
     const { email, codigo } = req.body;
-    const supabase = req.app.get('supabase');
+    const supabase = req.supabase;
 
-    console.log('🔍 Verificando código para:', email);
+    console.log('🔍 Verificando código para:', email, 'Código:', codigo);
 
     if (!email || !codigo) {
       return res.status(400).json({ 
@@ -321,13 +332,10 @@ router.post('/verificar-codigo', async (req, res) => {
       });
     }
 
-    // Verificar código en la base de datos CON INFORMACIÓN DEL USUARIO
+    // Verificar código en la base de datos
     const { data: recuperaciones, error } = await supabase
       .from('recuperacion_password')
-      .select(`
-        *,
-        usuarios!inner(id, usuario, nombre)
-      `)
+      .select('*')
       .eq('email', email)
       .eq('codigo', codigo)
       .eq('usado', false)
@@ -344,6 +352,7 @@ router.post('/verificar-codigo', async (req, res) => {
     }
 
     if (!recuperaciones || recuperaciones.length === 0) {
+      console.log('❌ Código no válido para:', email);
       return res.status(400).json({ 
         success: false, 
         error: 'Código inválido, expirado o ya utilizado' 
@@ -352,9 +361,16 @@ router.post('/verificar-codigo', async (req, res) => {
 
     const recuperacion = recuperaciones[0];
     
+    // Obtener información del usuario
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('usuario, nombre')
+      .eq('id', recuperacion.user_id)
+      .single();
+
     console.log('✅ Código verificado para usuario:', {
-      usuario: recuperacion.usuarios?.usuario,
-      nombre: recuperacion.usuarios?.nombre,
+      usuario: usuario?.usuario,
+      nombre: usuario?.nombre,
       email: recuperacion.email
     });
 
@@ -362,10 +378,9 @@ router.post('/verificar-codigo', async (req, res) => {
       success: true, 
       message: 'Código verificado correctamente',
       valido: true,
-      // Enviamos info del usuario al frontend para confirmación
       usuario: {
-        username: recuperacion.usuarios?.usuario,
-        nombre: recuperacion.usuarios?.nombre
+        username: usuario?.usuario,
+        nombre: usuario?.nombre
       }
     });
     
@@ -382,7 +397,7 @@ router.post('/verificar-codigo', async (req, res) => {
 router.post('/cambiar-password', async (req, res) => {
   try {
     const { email, codigo, nuevaPassword } = req.body;
-    const supabase = req.app.get('supabase');
+    const supabase = req.supabase;
 
     console.log('🔄 Cambiando password para:', email);
 
@@ -400,13 +415,10 @@ router.post('/cambiar-password', async (req, res) => {
       });
     }
 
-    // Verificar que el código es válido y obtener info del usuario
+    // Verificar que el código es válido
     const { data: recuperaciones, error: verificarError } = await supabase
       .from('recuperacion_password')
-      .select(`
-        *,
-        usuarios!inner(id, usuario, nombre)
-      `)
+      .select('*')
       .eq('email', email)
       .eq('codigo', codigo)
       .eq('usado', false)
@@ -430,15 +442,15 @@ router.post('/cambiar-password', async (req, res) => {
     }
 
     const recuperacion = recuperaciones[0];
-    const userId = recuperacion.usuarios?.id;
+    const userId = recuperacion.user_id;
 
     try {
-      // 👇 ENCRIPTAR LA NUEVA CONTRASEÑA CON BCRYPT
+      // ENCRIPTAR LA NUEVA CONTRASEÑA CON BCRYPT
       const hashedPassword = await encriptarPassword(nuevaPassword);
       
-      console.log('🔐 Contraseña encriptada correctamente para usuario:', recuperacion.usuarios?.usuario);
+      console.log('🔐 Contraseña encriptada correctamente para user_id:', userId);
 
-      // Actualizar contraseña del usuario CON LA CONTRASEÑA ENCRIPTADA
+      // Actualizar contraseña del usuario
       const { error: updateError } = await supabase
         .from('usuarios')
         .update({ pass: hashedPassword })
@@ -459,13 +471,19 @@ router.post('/cambiar-password', async (req, res) => {
         .eq('email', email)
         .eq('codigo', codigo);
 
+      // Obtener información del usuario para el log
+      const { data: usuario } = await supabase
+        .from('usuarios')
+        .select('usuario, nombre')
+        .eq('id', userId)
+        .single();
+
       // Log de la operación completada
       console.log('✅ CONTRASEÑA CAMBIADA EXITOSAMENTE:', {
-        usuario: recuperacion.usuarios?.usuario,
-        nombre: recuperacion.usuarios?.nombre,
+        usuario: usuario?.usuario,
+        nombre: usuario?.nombre,
         email: email,
         user_id: userId,
-        contraseña_encriptada: true,
         timestamp: new Date().toISOString()
       });
 
@@ -474,8 +492,8 @@ router.post('/cambiar-password', async (req, res) => {
         message: 'Contraseña cambiada exitosamente',
         actualizado: true,
         usuario: {
-          username: recuperacion.usuarios?.usuario,
-          nombre: recuperacion.usuarios?.nombre
+          username: usuario?.usuario,
+          nombre: usuario?.nombre
         }
       });
 
@@ -557,6 +575,15 @@ router.get('/test-encriptacion', async (req, res) => {
       error: error.message 
     });
   }
+});
+
+// Ruta de health check para el router
+router.get('/health', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Router de recuperación funcionando',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;
