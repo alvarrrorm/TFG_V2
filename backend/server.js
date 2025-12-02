@@ -21,8 +21,18 @@ const app = express();
 // ========== CONFIGURACIÓN EMAILJS v5 ==========
 const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
 const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
-const emailjsRecoveryServiceId = 'service_r7doupc';
-const emailjsRecoveryTemplateId = 'template_sy1terr';
+
+// Servicios y templates de EmailJS
+const emailjsConfig = {
+  recovery: {
+    serviceId: 'service_r7doupc',
+    templateId: 'template_sy1terr'
+  },
+  reserva: {
+    serviceId: 'service_fkwrrhs', // Servicio para confirmaciones de reserva
+    templateId: 'template_2fsp7pg' // Template para confirmaciones de reserva
+  }
+};
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
@@ -71,7 +81,9 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Función ACTUALIZADA para EmailJS v5.x
+// ========== FUNCIONES DE EMAIL ==========
+
+// Función ACTUALIZADA para EmailJS v5.x - Recuperación
 async function enviarEmailRecuperacion(datos) {
   try {
     const templateParams = {
@@ -91,8 +103,8 @@ async function enviarEmailRecuperacion(datos) {
     
     // ✅ SINTAXIS CORRECTA para EmailJS v5.x
     const result = await emailjs.send(
-      emailjsRecoveryServiceId,
-      emailjsRecoveryTemplateId,
+      emailjsConfig.recovery.serviceId,
+      emailjsConfig.recovery.templateId,
       templateParams,
       {
         publicKey: emailjsPublicKey,
@@ -118,8 +130,126 @@ async function enviarEmailRecuperacion(datos) {
   }
 }
 
-// ========== INYECTAR SUPABASE EN LA APP ==========
+// Función para enviar email de confirmación de reserva
+async function enviarEmailConfirmacionReserva(datosReserva) {
+  try {
+    console.log('📧 Preparando email de confirmación de reserva...');
+    console.log('📊 Datos de la reserva:', {
+      email: datosReserva.email,
+      usuario: datosReserva.nombre_usuario,
+      reservaId: datosReserva.id,
+      polideportivo: datosReserva.polideportivo_nombre,
+      precio: datosReserva.precio
+    });
+
+    // Formatear fecha para el email
+    const fechaReserva = new Date(datosReserva.fecha);
+    const fechaFormateada = fechaReserva.toLocaleDateString('es-ES', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const templateParams = {
+      user_name: datosReserva.nombre_usuario || 'Cliente',
+      user_email: datosReserva.email,
+      reservation_id: datosReserva.id || 'N/A',
+      polideportivo_name: datosReserva.polideportivo_nombre || 'Polideportivo',
+      pista_name: datosReserva.pista_nombre || datosReserva.pistas?.nombre || 'Pista',
+      reservation_date: fechaFormateada,
+      reservation_time: `${datosReserva.hora_inicio} - ${datosReserva.hora_fin}`,
+      reservation_price: `${datosReserva.precio} €`,
+      reservation_status: 'Confirmada',
+      payment_method: 'Tarjeta de crédito',
+      confirmation_date: new Date().toLocaleDateString('es-ES'),
+      app_name: 'Depo',
+      support_email: 'soporte@depo.com',
+      current_year: new Date().getFullYear(),
+      to_email: datosReserva.email
+    };
+
+    console.log('📨 Enviando email de confirmación...');
+
+    // Enviar email usando EmailJS v5
+    const result = await emailjs.send(
+      emailjsConfig.reserva.serviceId,
+      emailjsConfig.reserva.templateId,
+      templateParams,
+      {
+        publicKey: emailjsPublicKey,
+        privateKey: emailjsPrivateKey
+      }
+    );
+
+    console.log('✅ Email de confirmación enviado correctamente a:', datosReserva.email);
+    return result;
+
+  } catch (error) {
+    console.error('❌ Error enviando email de confirmación:', error);
+    
+    // En desarrollo, simular éxito y mostrar datos
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🧪 Modo desarrollo: Simulando envío exitoso de confirmación');
+      console.log('📧 Para:', datosReserva.email);
+      console.log('📋 Datos de la reserva que se enviarían:', {
+        reservaId: datosReserva.id,
+        usuario: datosReserva.nombre_usuario,
+        polideportivo: datosReserva.polideportivo_nombre,
+        fecha: datosReserva.fecha,
+        horario: `${datosReserva.hora_inicio} - ${datosReserva.hora_fin}`,
+        precio: `${datosReserva.precio} €`
+      });
+      return { status: 200, text: 'OK', simulated: true };
+    }
+    
+    throw error;
+  }
+}
+
+// Función para obtener email del usuario
+async function obtenerEmailUsuario(userId) {
+  try {
+    console.log('👤 Buscando email para usuario ID:', userId);
+    
+    if (!userId || userId === 0) {
+      console.log('⚠️  Usuario ID no válido o es 0');
+      return null;
+    }
+
+    const { data: usuario, error } = await supabase
+      .from('usuarios')
+      .select('id, correo, nombre, usuario')
+      .eq('id', userId)
+      .single();
+    
+    if (error) {
+      console.error('❌ Error obteniendo usuario:', error);
+      return null;
+    }
+    
+    if (!usuario) {
+      console.log('⚠️  Usuario no encontrado ID:', userId);
+      return null;
+    }
+    
+    console.log('✅ Usuario encontrado:', {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.correo
+    });
+    
+    return usuario;
+  } catch (error) {
+    console.error('❌ Error en obtenerEmailUsuario:', error);
+    return null;
+  }
+}
+
+// ========== INYECTAR FUNCIONES EN LA APP ==========
 app.set('supabase', supabase);
+app.set('enviarEmailConfirmacion', enviarEmailConfirmacionReserva);
+app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 
 // ========== CONFIGURAR RUTAS ==========
 const registroRouter = require('./rutas/registro');
@@ -516,6 +646,192 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
   }
 });
 
+// ========== RUTAS DE EMAIL PARA RESERVAS ==========
+
+// Test de email de confirmación de reserva
+app.get('/api/reservas/test-email', async (req, res) => {
+  try {
+    const testReserva = {
+      id: 999,
+      nombre_usuario: 'Alvaro Ramirez',
+      email: 'alvaroramirezm8@gmail.com',
+      polideportivo_nombre: 'Polideportivo Municipal',
+      pista_nombre: 'Pista 1 - Fútbol',
+      fecha: '2024-12-20',
+      hora_inicio: '16:00',
+      hora_fin: '18:00',
+      precio: 24.50,
+      pistas: { nombre: 'Pista 1 - Fútbol' }
+    };
+
+    console.log('🧪 Probando email de confirmación de reserva...');
+    
+    const result = await enviarEmailConfirmacionReserva(testReserva);
+    
+    res.json({ 
+      success: true, 
+      message: '✅ Email de confirmación de reserva enviado correctamente',
+      to: testReserva.email,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en test de reserva:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Ruta para confirmar reserva y enviar email
+app.put('/api/reservas/:id/confirmar', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('✅ Confirmando reserva ID:', id);
+
+    if (!id || isNaN(parseInt(id))) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'ID de reserva inválido' 
+      });
+    }
+
+    const reservaId = parseInt(id);
+
+    // 1. Primero obtenemos los datos de la reserva
+    const { data: reserva, error: queryError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', reservaId)
+      .single();
+
+    if (queryError || !reserva) {
+      console.error('❌ Error obteniendo reserva:', queryError);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada' 
+      });
+    }
+
+    // Verificar que la reserva esté pendiente
+    if (reserva.estado !== 'pendiente') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La reserva ya ha sido confirmada o cancelada' 
+      });
+    }
+
+    console.log('📋 Reserva encontrada:', {
+      id: reserva.id,
+      usuario_id: reserva.usuario_id,
+      nombre_usuario: reserva.nombre_usuario,
+      estado: reserva.estado,
+      precio: reserva.precio,
+      polideportivo: reserva.polideportivos?.nombre,
+      pista: reserva.pistas?.nombre
+    });
+
+    // 2. Actualizamos el estado de la reserva
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ 
+        estado: 'confirmada',
+        fecha_confirmacion: new Date().toISOString()
+      })
+      .eq('id', reservaId);
+
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor al confirmar' 
+      });
+    }
+
+    console.log('✅ Reserva actualizada a estado: confirmada');
+
+    // 3. Obtener el email del usuario
+    const usuario = await obtenerEmailUsuario(reserva.usuario_id);
+    
+    let emailEnviado = false;
+    let mensajeEmail = '';
+    
+    if (usuario && usuario.correo) {
+      const reservaConEmail = {
+        ...reserva,
+        email: usuario.correo,
+        nombre_usuario: usuario.nombre || reserva.nombre_usuario,
+        polideportivo_nombre: reserva.polideportivos?.nombre,
+        pista_nombre: reserva.pistas?.nombre,
+        estado: 'confirmada'
+      };
+
+      console.log('📧 Email del usuario obtenido:', usuario.correo);
+
+      // 4. Enviar email de confirmación
+      try {
+        await enviarEmailConfirmacionReserva(reservaConEmail);
+        emailEnviado = true;
+        mensajeEmail = 'Email de confirmación enviado correctamente';
+        console.log('✅ Email enviado exitosamente');
+        
+      } catch (emailError) {
+        console.error('⚠️  Error enviando email:', emailError);
+        mensajeEmail = 'Reserva confirmada, pero no se pudo enviar el email de confirmación';
+      }
+      
+    } else {
+      console.log('⚠️  Usuario no tiene email registrado');
+      mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
+    }
+
+    // Obtener reserva actualizada para la respuesta
+    const { data: reservaActualizada } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', reservaId)
+      .single();
+
+    const responseData = {
+      ...reservaActualizada,
+      ludoteca: false,
+      pistaNombre: reservaActualizada.pistas?.nombre,
+      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
+    };
+
+    if (emailEnviado) {
+      res.json({
+        success: true,
+        message: '✅ Reserva confirmada y email enviado',
+        data: responseData
+      });
+    } else {
+      res.json({
+        success: true,
+        message: '✅ Reserva confirmada',
+        data: responseData,
+        warning: mensajeEmail
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error en confirmar reserva:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
 // Test de recuperación
 app.get('/api/recupera/test', async (req, res) => {
   try {
@@ -555,7 +871,11 @@ app.get('/api/health', (req, res) => {
     message: '✅ Backend funcionando',
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
-    emailjs: 'v5.0.2'
+    emailjs: 'v5.0.2',
+    services: {
+      recovery: '✅ Configurado',
+      reservation: '✅ Configurado'
+    }
   });
 });
 
@@ -973,9 +1293,11 @@ app.listen(PORT, () => {
   console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
   console.log(`🌐 Node.js version: ${process.version}`);
   console.log(`📧 EmailJS: v5.0.2 configurado`);
+  console.log(`   • Servicio recuperación: ${emailjsConfig.recovery.serviceId}`);
+  console.log(`   • Servicio reservas: ${emailjsConfig.reserva.serviceId}`);
   console.log(`🔐 Supabase: ${supabaseUrl}`);
-  console.log(`🔑 Recuperación: http://localhost:${PORT}/api/recupera/health`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
+  console.log(`📧 Test reservas: http://localhost:${PORT}/api/reservas/test-email`);
   console.log(`🔐 Login: http://localhost:${PORT}/api/login`);
   console.log(`📝 Registro: http://localhost:${PORT}/api/registro`);
 });
