@@ -29,8 +29,8 @@ const emailjsConfig = {
     templateId: 'template_sy1terr'
   },
   reserva: {
-    serviceId: 'service_fkwrrhs', // Servicio para confirmaciones de reserva
-    templateId: 'template_2fsp7pg' // Template para confirmaciones de reserva
+    serviceId: 'service_lb9lbhi', // Servicio para confirmaciones de reserva
+    templateId: 'template_hfuxqzm' // Template para confirmaciones de reserva
   }
 };
 
