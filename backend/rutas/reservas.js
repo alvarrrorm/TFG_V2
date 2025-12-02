@@ -1,5 +1,17 @@
 const express = require('express');
 const router = express.Router();
+const emailjs = require('@emailjs/nodejs');
+
+// Configuración de EmailJS
+const emailjsConfig = {
+  reserva: {
+    serviceId: 'service_lb9lbhi',
+    templateId: 'template_hfuxqzm'
+  }
+};
+
+const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
+const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
 
 // 👇 FUNCIÓN REUTILIZABLE PARA FORMATEAR FECHA
 const formatearFecha = (fechaInput) => {
@@ -7,13 +19,11 @@ const formatearFecha = (fechaInput) => {
   
   console.log('🔄 Formateando fecha recibida:', fechaInput, 'Tipo:', typeof fechaInput);
   
-  // Si ya está en formato YYYY-MM-DD, devolverlo tal cual
   if (typeof fechaInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fechaInput)) {
     console.log('✅ Fecha ya en formato correcto:', fechaInput);
     return fechaInput;
   }
   
-  // Si es un string ISO (con hora y timezone), extraer solo la fecha
   if (typeof fechaInput === 'string' && fechaInput.includes('T')) {
     try {
       const fechaObj = new Date(fechaInput);
@@ -50,7 +60,6 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
   try {
     console.log('🔍 Buscando usuario:', { nombreUsuario, usuarioId });
     
-    // PRIMERO: Si tenemos usuario_id, usarlo directamente (la mejor opción)
     if (usuarioId && usuarioId !== 0) {
       const { data: usuarioPorId, error: errorPorId } = await supabase
         .from('usuarios')
@@ -64,13 +73,11 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
       }
     }
     
-    // SEGUNDO: Buscar por nombre_usuario exacto (login)
     if (nombreUsuario) {
-      // Buscar por USUARIO (login) exacto
       const { data: usuarioPorLogin, error: errorLogin } = await supabase
         .from('usuarios')
         .select('id, correo, nombre, usuario')
-        .eq('usuario', nombreUsuario)  // 👈 BUSCA EXACTO por campo "usuario"
+        .eq('usuario', nombreUsuario)
         .limit(1);
       
       if (!errorLogin && usuarioPorLogin && usuarioPorLogin.length === 1) {
@@ -78,11 +85,10 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
         return usuarioPorLogin[0];
       }
       
-      // Buscar por NOMBRE exacto
       const { data: usuarioPorNombre, error: errorNombre } = await supabase
         .from('usuarios')
         .select('id, correo, nombre, usuario')
-        .eq('nombre', nombreUsuario)  // 👈 BUSCA EXACTO por campo "nombre"
+        .eq('nombre', nombreUsuario)
         .limit(1);
       
       if (!errorNombre && usuarioPorNombre && usuarioPorNombre.length === 1) {
@@ -100,7 +106,132 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
   }
 };
 
-// Crear una reserva - VERSIÓN CORREGIDA
+// 👇 FUNCIÓN PARA CALCULAR DURACIÓN
+const calcularDuracion = (horaInicio, horaFin) => {
+  const [hInicio, mInicio] = horaInicio.split(':').map(Number);
+  const [hFin, mFin] = horaFin.split(':').map(Number);
+  
+  const minutosInicio = hInicio * 60 + mInicio;
+  const minutosFin = hFin * 60 + mFin;
+  const duracionMinutos = minutosFin - minutosInicio;
+  
+  if (duracionMinutos < 60) {
+    return `${duracionMinutos} minutos`;
+  } else {
+    const horas = Math.floor(duracionMinutos / 60);
+    const minutos = duracionMinutos % 60;
+    if (minutos === 0) {
+      return `${horas} ${horas === 1 ? 'hora' : 'horas'}`;
+    }
+    return `${horas}h ${minutos}min`;
+  }
+};
+
+// 👇 FUNCIÓN COMBINADA PARA ENVIAR EMAIL DE CONFIRMACIÓN
+const enviarEmailConfirmacion = async (datosEmail) => {
+  try {
+    console.log('📧 Preparando email de confirmación...');
+    console.log('📊 Datos del email:', {
+      to_name: datosEmail.to_name,
+      to_email: datosEmail.to_email,
+      reserva_id: datosEmail.reserva_id
+    });
+
+    // Formatear fecha si viene como string ISO
+    let fechaFormateada = datosEmail.fecha;
+    if (datosEmail.fecha && typeof datosEmail.fecha === 'string' && !datosEmail.fecha.includes(',')) {
+      try {
+        const fechaObj = new Date(datosEmail.fecha);
+        if (!isNaN(fechaObj.getTime())) {
+          fechaFormateada = fechaObj.toLocaleDateString('es-ES', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+        }
+      } catch (error) {
+        console.warn('⚠️  No se pudo formatear la fecha:', error);
+      }
+    }
+
+    const templateParams = {
+      // 👤 Datos del usuario
+      user_name: datosEmail.to_name || 'Cliente',
+      user_email: datosEmail.to_email,
+      to_email: datosEmail.to_email, // EmailJS necesita este campo
+      
+      // 📋 Datos de la reserva
+      reservation_id: datosEmail.reserva_id || '000000',
+      polideportivo_name: datosEmail.polideportivo || 'Polideportivo',
+      pista_name: datosEmail.pista || 'Pista',
+      reservation_date: fechaFormateada || 'Fecha no disponible',
+      reservation_time: datosEmail.horario || 'Horario no disponible',
+      reservation_duration: datosEmail.duracion || 'Duración no disponible',
+      reservation_price: datosEmail.precio || '€0.00',
+      reservation_status: 'Confirmada',
+      payment_method: 'Tarjeta de crédito',
+      confirmation_date: new Date().toLocaleDateString('es-ES'),
+      
+      // 🏢 Datos de contacto
+      app_name: 'Depo',
+      support_email: datosEmail.email_contacto || 'soporte@depo.com',
+      support_phone: datosEmail.telefono_contacto || 'N/A',
+      support_hours: datosEmail.horario_contacto || 'L-V: 8:00-22:00',
+      
+      // 📅 Información general
+      current_year: datosEmail.anio_actual || new Date().getFullYear().toString()
+    };
+
+    console.log('📨 Enviando email con EmailJS...');
+    console.log('📋 Template params resumidos:', {
+      to_name: templateParams.user_name,
+      to_email: templateParams.to_email,
+      reservation_id: templateParams.reservation_id,
+      polideportivo: templateParams.polideportivo_name,
+      fecha: templateParams.reservation_date,
+      horario: templateParams.reservation_time,
+      precio: templateParams.reservation_price
+    });
+
+    // Enviar email usando EmailJS
+    const result = await emailjs.send(
+      emailjsConfig.reserva.serviceId,     // service_lb9lbhi
+      emailjsConfig.reserva.templateId,    // template_hfuxqzm
+      templateParams,
+      {
+        publicKey: emailjsPublicKey,       // cm8peTJ9deE4bwUrS
+        privateKey: emailjsPrivateKey      // Td3FXR8CwPdKsuyIuwPF_
+      }
+    );
+
+    console.log('✅ Email enviado correctamente a:', datosEmail.to_email);
+    console.log('📩 Respuesta de EmailJS:', result.status, result.text);
+    return result;
+
+  } catch (error) {
+    console.error('❌ Error enviando email:', error);
+    
+    // En desarrollo, simular éxito y mostrar datos
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🧪 Modo desarrollo: Simulando envío exitoso');
+      console.log('📧 Para:', datosEmail.to_email);
+      console.log('📋 Datos que se enviarían:', {
+        user_name: datosEmail.to_name,
+        reservation_id: datosEmail.reserva_id,
+        polideportivo_name: datosEmail.polideportivo,
+        reservation_date: datosEmail.fecha,
+        reservation_time: datosEmail.horario,
+        reservation_price: datosEmail.precio
+      });
+      return { status: 200, text: 'OK', simulated: true };
+    }
+    
+    throw error;
+  }
+};
+
+// Crear una reserva
 router.post('/', async (req, res) => {
   const supabase = req.app.get('supabase');
   const {
@@ -127,7 +258,6 @@ router.post('/', async (req, res) => {
     precio
   });
 
-  // Validaciones básicas - AHORA REQUERIMOS usuario_id
   if (!nombre_usuario || !pista_id || !fecha || !hora_inicio || !hora_fin) {
     return res.status(400).json({ 
       success: false, 
@@ -135,7 +265,6 @@ router.post('/', async (req, res) => {
     });
   }
 
-  // Validar que el usuario_id sea válido
   if (!usuario_id || usuario_id === 0) {
     return res.status(400).json({ 
       success: false, 
@@ -158,7 +287,6 @@ router.post('/', async (req, res) => {
     });
   }
 
-  // Formatear fecha
   const fechaFormateada = formatearFecha(fecha);
   if (!fechaFormateada) {
     return res.status(400).json({ 
@@ -170,7 +298,6 @@ router.post('/', async (req, res) => {
   console.log('📅 Fecha formateada:', fechaFormateada);
 
   try {
-    // Primero obtener información de la pista y su polideportivo
     const { data: pistas, error: pistaError } = await supabase
       .from('pistas')
       .select(`
@@ -192,13 +319,11 @@ router.post('/', async (req, res) => {
     const polideportivoId = pistas.polideportivo_id;
     console.log('📍 Pista seleccionada:', pistas.nombre, 'Polideportivo:', polideportivoId);
 
-    // 👇 BUSCAR USUARIO CON LA FUNCIÓN MEJORADA
     let usuarioFinalId = 0;
     let usuarioEmail = '';
     let nombreUsuarioReal = nombre_usuario;
     let usuarioEncontrado = null;
 
-    // Buscar usuario por ID y nombre (usando la función mejorada)
     usuarioEncontrado = await buscarUsuarioExacto(supabase, nombre_usuario, usuario_id);
 
     if (usuarioEncontrado) {
@@ -224,7 +349,6 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Comprobar disponibilidad de la pista
     const { data: reservasConflictivas, error: disponibilidadError } = await supabase
       .from('reservas')
       .select('id')
@@ -249,7 +373,6 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Comprobar que el usuario no tenga otra reserva en ese horario
     const { data: reservasUsuario, error: usuarioReservaError } = await supabase
       .from('reservas')
       .select('id')
@@ -274,7 +397,6 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Calcular precio si no se envió
     let precioFinal = precio;
     if (precio === undefined) {
       const precioHora = parseFloat(pistas.precio);
@@ -285,7 +407,6 @@ router.post('/', async (req, res) => {
         });
       }
 
-      // Calcular duración en horas
       const [hInicio, mInicio] = hora_inicio.split(':').map(Number);
       const [hFin, mFin] = hora_fin.split(':').map(Number);
       const duracion = ((hFin * 60 + mFin) - (hInicio * 60 + mInicio)) / 60;
@@ -299,7 +420,6 @@ router.post('/', async (req, res) => {
 
       precioFinal = parseFloat((precioHora * duracion).toFixed(2));
 
-      // Añadir suplemento de ludoteca
       if (ludoteca) {
         precioFinal += 5;
       }
@@ -307,7 +427,6 @@ router.post('/', async (req, res) => {
 
     console.log('💰 Precio calculado:', precioFinal);
 
-    // 👇 INSERTAR RESERVA CON USUARIO_ID CORRECTO Y EMAIL
     const { data: nuevaReserva, error: insertError } = await supabase
       .from('reservas')
       .insert([{
@@ -320,7 +439,7 @@ router.post('/', async (req, res) => {
         hora_fin: hora_fin,
         precio: precioFinal,
         estado: estado,
-        email_usuario: usuarioEmail // 👈 GUARDAR EL EMAIL EN LA RESERVA
+        email_usuario: usuarioEmail
       }])
       .select(`
         *,
@@ -473,7 +592,6 @@ router.get('/disponibilidad', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Fecha y polideportivo son requeridos' });
   }
 
-  // Formatear fecha
   const fechaFormateada = formatearFecha(fecha);
   if (!fechaFormateada) {
     return res.status(400).json({ success: false, error: 'Fecha inválida' });
@@ -523,7 +641,6 @@ router.delete('/:id', async (req, res) => {
   console.log('🗑️ Eliminando reserva ID:', id);
 
   try {
-    // Primero obtener la reserva
     const { data: reserva, error: selectError } = await supabase
       .from('reservas')
       .select(`
@@ -539,7 +656,6 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
     }
 
-    // Eliminar la reserva
     const { error: deleteError } = await supabase
       .from('reservas')
       .delete()
@@ -570,10 +686,9 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// 👇 RUTA MEJORADA PARA CONFIRMAR RESERVA Y ENVIAR EMAIL
+// 👇 RUTA MEJORADA PARA CONFIRMAR RESERVA Y ENVIAR EMAIL CON TEMPLATE CORRECTO
 router.put('/:id/confirmar', async (req, res) => {
   const supabase = req.app.get('supabase');
-  const enviarEmailConfirmacion = req.app.get('enviarEmailConfirmacion');
   const { id } = req.params;
 
   console.log('✅ Confirmando reserva ID:', id);
@@ -617,7 +732,6 @@ router.put('/:id/confirmar', async (req, res) => {
     console.log('   Horario:', reservaCompleta.hora_inicio, '-', reservaCompleta.hora_fin);
     console.log('   Precio:', reservaCompleta.precio);
 
-    // Verificar que la reserva esté pendiente
     if (reservaCompleta.estado !== 'pendiente') {
       return res.status(400).json({ 
         success: false, 
@@ -625,16 +739,13 @@ router.put('/:id/confirmar', async (req, res) => {
       });
     }
 
-    // 👇 OBTENER EL EMAIL DEL USUARIO
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
     
-    // OPCIÓN 1: Usar email guardado en la reserva (MEJOR OPCIÓN)
     if (reservaCompleta.email_usuario) {
       emailParaEnviar = reservaCompleta.email_usuario;
       console.log('📧 Usando email guardado en reserva:', emailParaEnviar);
     }
-    // OPCIÓN 2: Buscar usuario por ID para obtener email
     else if (reservaCompleta.usuario_id && reservaCompleta.usuario_id !== 0) {
       console.log('🔍 Buscando usuario por ID:', reservaCompleta.usuario_id);
       const { data: usuario, error: usuarioError } = await supabase
@@ -652,7 +763,6 @@ router.put('/:id/confirmar', async (req, res) => {
       }
     }
 
-    // 2. Actualizar el estado de la reserva
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
@@ -671,26 +781,32 @@ router.put('/:id/confirmar', async (req, res) => {
 
     console.log('✅ Estado de reserva actualizado a: confirmada');
 
-    // 3. Enviar email si tenemos dirección
     let emailEnviado = false;
     let mensajeEmail = '';
     
     if (emailParaEnviar) {
-      const reservaConEmail = {
-        ...reservaCompleta,
-        id: reservaId,
-        email: emailParaEnviar,
-        nombre_usuario: nombreParaEmail,
-        polideportivo_nombre: reservaCompleta.polideportivos?.nombre,
-        pista_nombre: reservaCompleta.pistas?.nombre,
-        estado: 'confirmada'
+      const duracion = calcularDuracion(reservaCompleta.hora_inicio, reservaCompleta.hora_fin);
+      
+      const datosEmail = {
+        to_name: nombreParaEmail,
+        to_email: emailParaEnviar,
+        reserva_id: reservaCompleta.id.toString().padStart(6, '0'),
+        polideportivo: reservaCompleta.polideportivos?.nombre || 'Polideportivo',
+        pista: reservaCompleta.pistas?.nombre || 'Pista',
+        fecha: reservaCompleta.fecha,
+        horario: `${reservaCompleta.hora_inicio} - ${reservaCompleta.hora_fin}`,
+        duracion: duracion,
+        precio: `€${parseFloat(reservaCompleta.precio).toFixed(2)}`,
+        email_contacto: 'info@polideportivo.com',
+        telefono_contacto: '+34 912 345 678',
+        horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
+        anio_actual: new Date().getFullYear().toString()
       };
 
-      console.log('📤 Enviando email a:', emailParaEnviar);
-      console.log('👤 Nombre en email:', nombreParaEmail);
+      console.log('📤 Enviando email con datos:', datosEmail);
 
       try {
-        await enviarEmailConfirmacion(reservaConEmail);
+        await enviarEmailConfirmacion(datosEmail);
         emailEnviado = true;
         mensajeEmail = 'Email de confirmación enviado correctamente';
         console.log('✅ Email enviado exitosamente');
@@ -705,7 +821,6 @@ router.put('/:id/confirmar', async (req, res) => {
       mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
     }
 
-    // 4. Obtener reserva actualizada para la respuesta
     const { data: reservaActualizada } = await supabase
       .from('reservas')
       .select(`
@@ -750,13 +865,11 @@ router.put('/:id/confirmar', async (req, res) => {
 // 👇 RUTA PARA REENVIAR EMAIL DE CONFIRMACIÓN
 router.post('/:id/reenviar-email', async (req, res) => {
   const supabase = req.app.get('supabase');
-  const enviarEmailConfirmacion = req.app.get('enviarEmailConfirmacion');
   const { id } = req.params;
 
   console.log(`📧 Reenviando email para reserva ID: ${id}`);
 
   try {
-    // Obtener datos básicos de la reserva
     const { data: reserva, error: queryError } = await supabase
       .from('reservas')
       .select(`
@@ -775,7 +888,6 @@ router.post('/:id/reenviar-email', async (req, res) => {
       });
     }
 
-    // Verificar que la reserva esté confirmada
     if (reserva.estado !== 'confirmada') {
       return res.status(400).json({ 
         success: false, 
@@ -783,14 +895,11 @@ router.post('/:id/reenviar-email', async (req, res) => {
       });
     }
 
-    // Obtener email del usuario
     let emailParaEnviar = '';
     
-    // Primero usar email guardado en reserva
     if (reserva.email_usuario) {
       emailParaEnviar = reserva.email_usuario;
     }
-    // Si no, buscar por usuario_id
     else if (reserva.usuario_id && reserva.usuario_id !== 0) {
       const { data: usuario, error: usuarioError } = await supabase
         .from('usuarios')
@@ -810,19 +919,28 @@ router.post('/:id/reenviar-email', async (req, res) => {
       });
     }
 
-    const reservaConEmail = {
-      ...reserva,
-      email: emailParaEnviar,
-      nombre_usuario: reserva.nombre_usuario,
-      polideportivo_nombre: reserva.polideportivos?.nombre,
-      pista_nombre: reserva.pistas?.nombre
+    const duracion = calcularDuracion(reserva.hora_inicio, reserva.hora_fin);
+    
+    const datosEmail = {
+      to_name: reserva.nombre_usuario,
+      to_email: emailParaEnviar,
+      reserva_id: reserva.id.toString().padStart(6, '0'),
+      polideportivo: reserva.polideportivos?.nombre || 'Polideportivo',
+      pista: reserva.pistas?.nombre || 'Pista',
+      fecha: reserva.fecha,
+      horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
+      duracion: duracion,
+      precio: `€${parseFloat(reserva.precio).toFixed(2)}`,
+      email_contacto: 'info@polideportivo.com',
+      telefono_contacto: '+34 912 345 678',
+      horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
+      anio_actual: new Date().getFullYear().toString()
     };
 
     console.log('📧 Reenviando email a:', emailParaEnviar);
 
-    // Enviar email
     try {
-      await enviarEmailConfirmacion(reservaConEmail);
+      await enviarEmailConfirmacion(datosEmail);
 
       console.log('✅ Email reenviado exitosamente a:', emailParaEnviar);
 
@@ -867,7 +985,6 @@ router.put('/:id/cancelar', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
     }
 
-    // Obtener reserva actualizada
     const { data: reserva, error: selectError } = await supabase
       .from('reservas')
       .select(`
@@ -930,7 +1047,6 @@ router.put('/:id', async (req, res) => {
   const reservaId = parseInt(id);
 
   try {
-    // Primero obtener la reserva actual
     const { data: reservaActual, error: getError } = await supabase
       .from('reservas')
       .select('*')
@@ -944,7 +1060,6 @@ router.put('/:id', async (req, res) => {
 
     console.log('📋 Reserva actual:', reservaActual);
     
-    // Verificar disponibilidad si se cambian datos de horario/pista
     if (pista_id || fecha || hora_inicio || hora_fin) {
       const pistaId = pista_id || reservaActual.pista_id;
       const fechaReserva = fecha ? formatearFecha(fecha) : reservaActual.fecha;
@@ -989,7 +1104,6 @@ router.put('/:id', async (req, res) => {
       console.log('✅ Disponibilidad verificada - Sin conflictos');
     }
 
-    // Obtener el polideportivo_id si se cambia la pista
     let nuevoPolideportivoId = null;
     if (pista_id && pista_id !== reservaActual.pista_id) {
       console.log('🔄 Cambiando pista, obteniendo nuevo polideportivo_id');
@@ -1007,10 +1121,8 @@ router.put('/:id', async (req, res) => {
       console.log('📍 Nuevo polideportivo_id:', nuevoPolideportivoId);
     }
 
-    // Preparar datos para actualizar
     const updateData = {};
 
-    // Campos a actualizar
     if (pista_id !== undefined) updateData.pista_id = pista_id;
     if (fecha !== undefined) {
       const fechaFormateada = formatearFecha(fecha);
@@ -1048,7 +1160,6 @@ router.put('/:id', async (req, res) => {
 
     console.log('🔄 Campos a actualizar:', updateData);
 
-    // Actualizar la reserva
     const { data: reservaActualizada, error: updateError } = await supabase
       .from('reservas')
       .update(updateData)
