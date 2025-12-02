@@ -106,7 +106,7 @@ router.post('/', async (req, res) => {
   const {
     dni_usuario,
     nombre_usuario,
-    usuario_id, // 👈 AHORA RECIBIMOS usuario_id DESDE EL FRONTEND
+    usuario_id,
     pista_id,
     fecha,
     hora_inicio,
@@ -118,7 +118,7 @@ router.post('/', async (req, res) => {
 
   console.log('📥 Creando nueva reserva con datos:', {
     nombre_usuario, 
-    usuario_id_provided: usuario_id, // 👈 VERIFICAR SI VIENE DEL FRONTEND
+    usuario_id_provided: usuario_id,
     pista_id, 
     fecha, 
     hora_inicio, 
