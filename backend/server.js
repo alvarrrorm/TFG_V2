@@ -4,7 +4,6 @@ const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const emailjs = require('@emailjs/nodejs');
-const cookieParser = require('cookie-parser');
 
 // ========== CONFIGURACIÓN ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
@@ -51,7 +50,40 @@ app.use(cors({
 }));
 app.options('*', cors());
 app.use(express.json());
-app.use(cookieParser()); // IMPORTANTE: Para leer cookies
+
+// ========== FUNCIÓN PARA MANEJAR COOKIES SIN COOKIE-PARSER ==========
+const parseCookies = (req) => {
+  const cookies = {};
+  if (req.headers.cookie) {
+    req.headers.cookie.split(';').forEach(cookie => {
+      const parts = cookie.split('=');
+      const key = parts.shift().trim();
+      const value = parts.join('=');
+      if (key && value !== undefined) {
+        cookies[key] = decodeURIComponent(value);
+      }
+    });
+  }
+  return cookies;
+};
+
+// Función para establecer cookies
+const setCookie = (res, name, value, options = {}) => {
+  let cookie = `${name}=${encodeURIComponent(value)};`;
+  
+  if (options.httpOnly) cookie += ' HttpOnly;';
+  if (options.secure) cookie += ' Secure;';
+  if (options.sameSite) cookie += ` SameSite=${options.sameSite};`;
+  if (options.maxAge) cookie += ` Max-Age=${options.maxAge};`;
+  if (options.path) cookie += ` Path=${options.path || '/'};`;
+  
+  res.setHeader('Set-Cookie', cookie);
+};
+
+// Función para limpiar cookies
+const clearCookie = (res, name) => {
+  res.setHeader('Set-Cookie', `${name}=; Max-Age=0; Path=/`);
+};
 
 // ========== MIDDLEWARE DE AUTENTICACIÓN ==========
 const authenticateToken = (req, res, next) => {
@@ -59,8 +91,9 @@ const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const tokenFromHeader = authHeader && authHeader.split(' ')[1];
   
-  // 2. Intentar obtener token de cookie
-  const tokenFromCookie = req.cookies?.auth_token;
+  // 2. Intentar obtener token de cookie usando nuestra función
+  const cookies = parseCookies(req);
+  const tokenFromCookie = cookies.auth_token;
   
   // 3. Intentar obtener token de query string (solo para desarrollo)
   const tokenFromQuery = req.query?.token;
@@ -284,7 +317,7 @@ app.get('/api/auth/health', (req, res) => {
   });
 });
 
-// Login seguro con cookies HTTP-only - ✅ ESTA ES LA RUTA PRINCIPAL AHORA
+// Login seguro con cookies HTTP-only
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { usuario, password } = req.body;
@@ -354,19 +387,21 @@ app.post('/api/auth/login', async (req, res) => {
     // Guardar refresh token
     refreshTokens.set(user.id.toString(), refreshToken);
 
-    // Configurar cookies HTTP-only seguras
-    res.cookie('auth_token', accessToken, {
+    // Configurar cookies HTTP-only seguras usando nuestra función
+    setCookie(res, 'auth_token', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000 // 24 horas
+      maxAge: 24 * 60 * 60 * 1000,
+      path: '/'
     });
 
-    res.cookie('refresh_token', refreshToken, {
+    setCookie(res, 'refresh_token', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 días
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/'
     });
 
     console.log('✅ Login seguro exitoso para:', usuario);
@@ -402,7 +437,8 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 // Refrescar token
 app.post('/api/auth/refresh', (req, res) => {
   try {
-    const refreshToken = req.cookies?.refresh_token;
+    const cookies = parseCookies(req);
+    const refreshToken = cookies.refresh_token;
     
     if (!refreshToken) {
       return res.status(401).json({ 
@@ -454,11 +490,12 @@ app.post('/api/auth/refresh', (req, res) => {
       );
 
       // Actualizar cookie
-      res.cookie('auth_token', newAccessToken, {
+      setCookie(res, 'auth_token', newAccessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000
+        maxAge: 24 * 60 * 60 * 1000,
+        path: '/'
       });
 
       res.json({
@@ -484,8 +521,8 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
     refreshTokens.delete(req.user.id.toString());
     
     // Limpiar cookies
-    res.clearCookie('auth_token');
-    res.clearCookie('refresh_token');
+    clearCookie(res, 'auth_token');
+    clearCookie(res, 'refresh_token');
     
     res.json({
       success: true,
@@ -493,6 +530,79 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
     });
   } catch (error) {
     console.error('Error en logout:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
+    });
+  }
+});
+
+// Login tradicional (mantener compatibilidad)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { usuario, password } = req.body;
+    
+    console.log('🔐 Login tradicional para:', usuario);
+    
+    if (!usuario || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usuario y contraseña requeridos'
+      });
+    }
+
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('usuario', usuario)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.pass);
+
+    if (!passwordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    // Generar token
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        usuario: user.usuario,
+        nombre: user.nombre,
+        email: user.correo,
+        rol: user.rol || 'user'
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Login exitoso:', usuario);
+    
+    res.json({
+      success: true,
+      message: 'Login exitoso',
+      token: token,
+      user: {
+        id: user.id,
+        usuario: user.usuario,
+        nombre: user.nombre,
+        email: user.correo,
+        rol: user.rol || 'user'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en login:', error);
     res.status(500).json({
       success: false,
       error: 'Error interno del servidor'
@@ -510,23 +620,6 @@ app.get('/api/protected/me', authenticateToken, (req, res) => {
     user: req.user
   });
 });
-
-// ========== IMPORTAR Y CONFIGURAR RUTAS EXISTENTES ==========
-// IMPORTANTE: Si tienes otros archivos de rutas, descomenta estas líneas:
-/*
-const registroRouter = require('./rutas/registro');
-const pistasRouter = require('./rutas/pistas');
-const polideportivosRouter = require('./rutas/polideportivos');
-const reservasRouter = require('./rutas/reservas');
-const recuperaRouter = require('./rutas/recupera');
-
-// Configurar rutas
-app.use('/api/registro', registroRouter);
-app.use('/api/pistas', pistasRouter);
-app.use('/api/polideportivos', polideportivosRouter);
-app.use('/api/reservas', reservasRouter);
-app.use('/api/recupera', recuperaRouter);
-*/
 
 // ========== RUTAS DE RECUPERACIÓN ==========
 app.get('/api/recupera/health', (req, res) => {
@@ -1014,7 +1107,7 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// REGISTRO (actualizada para usar el nuevo sistema de tokens)
+// REGISTRO
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
@@ -1140,36 +1233,25 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // Generar token usando el nuevo sistema
-    const accessToken = jwt.sign(
+    // Generar token
+    const token = jwt.sign(
       { 
         id: newUser.id, 
         usuario: newUser.usuario,
         nombre: newUser.nombre,
         email: newUser.correo,
-        rol: newUser.rol,
-        dni: newUser.dni,
-        telefono: newUser.telefono,
-        type: 'access'
+        rol: newUser.rol
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
-
-    // También configurar cookies para registro
-    res.cookie('auth_token', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000
-    });
 
     console.log('✅ Usuario registrado exitosamente:', newUser.usuario);
     
     res.json({
       success: true,
       message: `Usuario registrado correctamente como ${rol}`,
-      token: accessToken,
+      token: token,
       user: {
         id: newUser.id,
         usuario: newUser.usuario,
@@ -1192,7 +1274,7 @@ app.post('/api/registro', async (req, res) => {
 
 // ========== RUTAS DE DATOS BÁSICAS ==========
 
-// POLIDEPORTIVOS (pública)
+// POLIDEPORTIVOS
 app.get('/api/polideportivos', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1214,7 +1296,7 @@ app.get('/api/polideportivos', async (req, res) => {
   }
 });
 
-// PISTAS (pública)
+// PISTAS
 app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
@@ -1311,6 +1393,7 @@ app.listen(PORT, () => {
   console.log(`   • Verificar: GET /api/auth/verify`);
   console.log(`   • Refrescar: POST /api/auth/refresh`);
   console.log(`   • Logout: POST /api/auth/logout`);
+  console.log(`   • Login tradicional: POST /api/login`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
 });
