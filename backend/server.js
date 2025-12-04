@@ -38,7 +38,10 @@ const emailjsConfig = {
   }
 };
 
-// ========== MIDDLEWARE ==========
+// ========== IMPORTAR ROUTERS ==========
+// Necesitas importar el router de reservas que creaste anteriormente
+const reservasRouter = require('./routes/reservas'); // Ajusta la ruta según tu estructura
+
 // ========== MIDDLEWARE ==========
 app.use(cors({
   origin: [
@@ -306,6 +309,10 @@ async function obtenerEmailUsuario(userId) {
 app.set('supabase', supabase);
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacionReserva);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
+
+// ========== REGISTRAR ROUTERS ==========
+// Asegúrate de que el router de reservas tenga acceso al supabase
+app.use('/api/reservas', reservasRouter);
 
 // ========== RUTAS DE AUTENTICACIÓN SEGURA ==========
 
@@ -898,7 +905,7 @@ app.get('/api/recupera/test', async (req, res) => {
   }
 });
 
-// ========== RUTAS DE EMAIL PARA RESERVAS ==========
+// Test email para reservas
 app.get('/api/reservas/test-email', async (req, res) => {
   try {
     const testReserva = {
@@ -934,141 +941,6 @@ app.get('/api/reservas/test-email', async (req, res) => {
   }
 });
 
-// Ruta para confirmar reserva y enviar email (PROTEGIDA)
-app.put('/api/reservas/:id/confirmar', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log('✅ Confirmando reserva ID:', id, 'por usuario:', req.user.usuario);
-
-    if (!id || isNaN(parseInt(id))) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'ID de reserva inválido' 
-      });
-    }
-
-    const reservaId = parseInt(id);
-
-    // Verificar que la reserva pertenece al usuario
-    const { data: reserva, error: queryError } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        polideportivos!inner(nombre),
-        pistas!inner(nombre)
-      `)
-      .eq('id', reservaId)
-      .eq('usuario_id', req.user.id)
-      .single();
-
-    if (queryError || !reserva) {
-      console.error('❌ Error obteniendo reserva:', queryError);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Reserva no encontrada o no tienes permiso' 
-      });
-    }
-
-    if (reserva.estado !== 'pendiente') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'La reserva ya ha sido confirmada o cancelada' 
-      });
-    }
-
-    // Actualizar estado de la reserva
-    const { error: updateError } = await supabase
-      .from('reservas')
-      .update({ 
-        estado: 'confirmada',
-        fecha_confirmacion: new Date().toISOString()
-      })
-      .eq('id', reservaId);
-
-    if (updateError) {
-      console.error('❌ Error actualizando reserva:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor al confirmar' 
-      });
-    }
-
-    console.log('✅ Reserva actualizada a estado: confirmada');
-
-    // Obtener el email del usuario
-    const usuario = await obtenerEmailUsuario(req.user.id);
-    
-    let emailEnviado = false;
-    let mensajeEmail = '';
-    
-    if (usuario && usuario.correo) {
-      const reservaConEmail = {
-        ...reserva,
-        email: usuario.correo,
-        nombre_usuario: usuario.nombre || reserva.nombre_usuario,
-        polideportivo_nombre: reserva.polideportivos?.nombre,
-        pista_nombre: reserva.pistas?.nombre,
-        estado: 'confirmada'
-      };
-
-      try {
-        await enviarEmailConfirmacionReserva(reservaConEmail);
-        emailEnviado = true;
-        mensajeEmail = 'Email de confirmación enviado correctamente';
-        console.log('✅ Email enviado exitosamente');
-        
-      } catch (emailError) {
-        console.error('⚠️  Error enviando email:', emailError);
-        mensajeEmail = 'Reserva confirmada, pero no se pudo enviar el email de confirmación';
-      }
-      
-    } else {
-      console.log('⚠️  Usuario no tiene email registrado');
-      mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
-    }
-
-    // Obtener reserva actualizada para la respuesta
-    const { data: reservaActualizada } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        polideportivos!inner(nombre),
-        pistas!inner(nombre)
-      `)
-      .eq('id', reservaId)
-      .single();
-
-    const responseData = {
-      ...reservaActualizada,
-      ludoteca: false,
-      pistaNombre: reservaActualizada.pistas?.nombre,
-      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
-    };
-
-    if (emailEnviado) {
-      res.json({
-        success: true,
-        message: '✅ Reserva confirmada y email enviado',
-        data: responseData
-      });
-    } else {
-      res.json({
-        success: true,
-        message: '✅ Reserva confirmada',
-        data: responseData,
-        warning: mensajeEmail
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Error en confirmar reserva:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
 // ========== RUTAS PÚBLICAS ==========
 
 // HEALTH CHECK
@@ -1084,7 +956,11 @@ app.get('/api/health', (req, res) => {
       login: '/api/auth/login',
       verify: '/api/auth/verify',
       refresh: '/api/auth/refresh',
-      logout: '/api/auth/logout'
+      logout: '/api/auth/logout',
+      reservas: '/api/reservas/*',
+      polideportivos: '/api/polideportivos',
+      pistas: '/api/pistas',
+      registro: '/api/registro'
     }
   });
 });
@@ -1112,7 +988,56 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// REGISTRO
+// POLIDEPORTIVOS
+app.get('/api/polideportivos', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('polideportivos')
+      .select('*')
+      .order('nombre');
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data || []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo polideportivos'
+    });
+  }
+});
+
+// PISTAS
+app.get('/api/pistas', async (req, res) => {
+  try {
+    const { polideportivo_id } = req.query;
+    
+    let query = supabase.from('pistas').select('*');
+    
+    if (polideportivo_id) {
+      query = query.eq('polideportivo_id', polideportivo_id);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data || []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error obteniendo pistas'
+    });
+  }
+});
+
+// ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
@@ -1277,98 +1202,6 @@ app.post('/api/registro', async (req, res) => {
   }
 });
 
-// ========== RUTAS DE DATOS BÁSICAS ==========
-
-// POLIDEPORTIVOS
-app.get('/api/polideportivos', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('polideportivos')
-      .select('*')
-      .order('nombre');
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: data || []
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Error obteniendo polideportivos'
-    });
-  }
-});
-
-// PISTAS
-app.get('/api/pistas', async (req, res) => {
-  try {
-    const { polideportivo_id } = req.query;
-    
-    let query = supabase.from('pistas').select('*');
-    
-    if (polideportivo_id) {
-      query = query.eq('polideportivo_id', polideportivo_id);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: data || []
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Error obteniendo pistas'
-    });
-  }
-});
-
-// RESERVAS - GET (PROTEGIDO)
-app.get('/api/reservas', authenticateToken, async (req, res) => {
-  try {
-    const { usuario_id, fecha } = req.query;
-    
-    let query = supabase
-      .from('reservas')
-      .select(`
-        *,
-        pistas (*),
-        polideportivos (*)
-      `);
-
-    // Si no es admin, solo ver sus propias reservas
-    if (req.user.rol !== 'admin') {
-      query = query.eq('usuario_id', req.user.id);
-    } else if (usuario_id) {
-      query = query.eq('usuario_id', usuario_id);
-    }
-
-    if (fecha) {
-      query = query.eq('fecha', fecha);
-    }
-
-    const { data, error } = await query.order('fecha', { ascending: false });
-
-    if (error) throw error;
-
-    res.json({
-      success: true,
-      data: data || []
-    });
-  } catch (error) {
-    console.error('❌ Error obteniendo reservas:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error obteniendo reservas'
-    });
-  }
-});
-
 // ========== MANEJO DE ERRORES ==========
 app.use((req, res) => {
   res.status(404).json({ 
@@ -1393,12 +1226,13 @@ app.listen(PORT, () => {
   console.log(`🔐 Sistema de autenticación segura ACTIVADO`);
   console.log(`📧 EmailJS: v5.0.2 configurado`);
   console.log(`🌐 Supabase: ${supabaseUrl}`);
-  console.log(`🔑 Endpoints de autenticación:`);
-  console.log(`   • Login seguro: POST /api/auth/login`);
-  console.log(`   • Verificar: GET /api/auth/verify`);
-  console.log(`   • Refrescar: POST /api/auth/refresh`);
-  console.log(`   • Logout: POST /api/auth/logout`);
-  console.log(`   • Login tradicional: POST /api/login`);
+  console.log(`🔑 Endpoints principales:`);
+  console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
+  console.log(`   • Login tradicional: /api/login`);
+  console.log(`   • Reservas: /api/reservas/*`);
+  console.log(`   • Polideportivos: /api/polideportivos`);
+  console.log(`   • Pistas: /api/pistas`);
+  console.log(`   • Registro: /api/registro`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
 });

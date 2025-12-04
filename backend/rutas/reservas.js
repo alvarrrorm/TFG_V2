@@ -106,6 +106,34 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
   }
 };
 
+const authenticateToken = (req, res, next) => {
+  // Esta función ya existe en server.js, pero puedes definirla aquí también
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Token de autenticación requerido' 
+    });
+  }
+
+  const jwt = require('jsonwebtoken');
+  const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Token inválido o expirado' 
+      });
+    }
+    
+    req.user = user;
+    next();
+  });
+};
+
 // 👇 FUNCIÓN PARA CALCULAR DURACIÓN
 const calcularDuracion = (horaInicio, horaFin) => {
   const [hInicio, mInicio] = horaInicio.split(':').map(Number);
