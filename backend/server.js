@@ -284,7 +284,7 @@ app.get('/api/auth/health', (req, res) => {
   });
 });
 
-// Login seguro con cookies HTTP-only
+// Login seguro con cookies HTTP-only - ✅ ESTA ES LA RUTA PRINCIPAL AHORA
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { usuario, password } = req.body;
@@ -500,79 +500,6 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
   }
 });
 
-// Login tradicional (mantener compatibilidad)
-app.post('/api/login', async (req, res) => {
-  try {
-    const { usuario, password } = req.body;
-    
-    console.log('🔐 Login tradicional para:', usuario);
-    
-    if (!usuario || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Usuario y contraseña requeridos'
-      });
-    }
-
-    const { data: user, error } = await supabase
-      .from('usuarios')
-      .select('*')
-      .eq('usuario', usuario)
-      .single();
-
-    if (error || !user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.pass);
-
-    if (!passwordValid) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    // Generar token
-    const token = jwt.sign(
-      { 
-        id: user.id, 
-        usuario: user.usuario,
-        nombre: user.nombre,
-        email: user.correo,
-        rol: user.rol || 'user'
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    console.log('✅ Login exitoso:', usuario);
-    
-    res.json({
-      success: true,
-      message: 'Login exitoso',
-      token: token,
-      user: {
-        id: user.id,
-        usuario: user.usuario,
-        nombre: user.nombre,
-        email: user.correo,
-        rol: user.rol || 'user'
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error en login:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
 // ========== RUTAS PROTEGIDAS POR TOKEN ==========
 
 // Ejemplo de ruta protegida
@@ -584,7 +511,9 @@ app.get('/api/protected/me', authenticateToken, (req, res) => {
   });
 });
 
-// ========== CONFIGURAR RUTAS EXISTENTES ==========
+// ========== IMPORTAR Y CONFIGURAR RUTAS EXISTENTES ==========
+// IMPORTANTE: Si tienes otros archivos de rutas, descomenta estas líneas:
+/*
 const registroRouter = require('./rutas/registro');
 const pistasRouter = require('./rutas/pistas');
 const polideportivosRouter = require('./rutas/polideportivos');
@@ -597,6 +526,7 @@ app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/reservas', reservasRouter);
 app.use('/api/recupera', recuperaRouter);
+*/
 
 // ========== RUTAS DE RECUPERACIÓN ==========
 app.get('/api/recupera/health', (req, res) => {
@@ -607,8 +537,268 @@ app.get('/api/recupera/health', (req, res) => {
   });
 });
 
-// ... (mantén todas tus rutas de recuperación existentes aquí)
-// Solo copia y pega todo desde "Solicitar recuperación" hasta "Test de recuperación"
+// Solicitar recuperación de contraseña
+app.post('/api/recupera/solicitar', async (req, res) => {
+  try {
+    const { usuario, email } = req.body;
+    
+    console.log('🔐 Solicitud de recuperación para:', { usuario, email });
+    
+    if (!usuario && !email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Proporciona usuario o email' 
+      });
+    }
+
+    let query = supabase.from('usuarios').select('*');
+    
+    if (usuario) {
+      query = query.eq('usuario', usuario);
+    }
+    if (email) {
+      query = query.eq('correo', email);
+    }
+
+    const { data: user, error } = await query.single();
+
+    if (error || !user) {
+      console.log('⚠️ Usuario no encontrado:', { usuario, email });
+      // Por seguridad, damos el mismo mensaje aunque no exista
+      return res.json({
+        success: true,
+        message: 'Si el usuario existe, recibirás un email con el código'
+      });
+    }
+
+    if (!user.correo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usuario no tiene email registrado'
+      });
+    }
+
+    const codigo = generarCodigo();
+    const expiration = new Date();
+    expiration.setMinutes(expiration.getMinutes() + 15);
+
+    const { error: upsertError } = await supabase
+      .from('codigos_recuperacion')
+      .upsert({
+        usuario_id: user.id,
+        codigo: codigo,
+        expira_en: expiration.toISOString(),
+        usado: false
+      });
+
+    if (upsertError) {
+      console.error('❌ Error guardando código:', upsertError);
+      throw new Error('Error al generar código de recuperación');
+    }
+
+    const datosEmail = {
+      usuario: user.usuario,
+      nombre_usuario: user.nombre,
+      email: user.correo,
+      codigo: codigo
+    };
+
+    await enviarEmailRecuperacion(datosEmail);
+
+    console.log('✅ Código de recuperación generado para:', user.usuario);
+    
+    res.json({
+      success: true,
+      message: 'Código de recuperación enviado al email registrado',
+      usuario: user.usuario,
+      email: user.correo
+    });
+
+  } catch (error) {
+    console.error('❌ Error en solicitud de recuperación:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al procesar la solicitud' 
+    });
+  }
+});
+
+// Verificar código de recuperación
+app.post('/api/recupera/verificar', async (req, res) => {
+  try {
+    const { usuario, codigo } = req.body;
+    
+    console.log('🔐 Verificando código para:', usuario);
+    
+    if (!usuario || !codigo) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Usuario y código requeridos' 
+      });
+    }
+
+    const { data: user, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, usuario, correo')
+      .eq('usuario', usuario)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Usuario no encontrado' 
+      });
+    }
+
+    const { data: codigoData, error: codigoError } = await supabase
+      .from('codigos_recuperacion')
+      .select('*')
+      .eq('usuario_id', user.id)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expira_en', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (codigoError || !codigoData) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido o expirado' 
+      });
+    }
+
+    console.log('✅ Código verificado para:', usuario);
+    
+    res.json({
+      success: true,
+      message: 'Código verificado correctamente',
+      usuario_id: user.id,
+      usuario: user.usuario,
+      puede_restablecer: true
+    });
+
+  } catch (error) {
+    console.error('❌ Error verificando código:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al verificar el código' 
+    });
+  }
+});
+
+// Restablecer contraseña
+app.post('/api/recupera/restablecer', async (req, res) => {
+  try {
+    const { usuario_id, codigo, nueva_password, confirmar_password } = req.body;
+    
+    console.log('🔐 Restableciendo contraseña para usuario ID:', usuario_id);
+    
+    if (!usuario_id || !codigo || !nueva_password || !confirmar_password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Todos los campos son requeridos' 
+      });
+    }
+
+    if (nueva_password !== confirmar_password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Las contraseñas no coinciden' 
+      });
+    }
+
+    if (nueva_password.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La contraseña debe tener al menos 6 caracteres' 
+      });
+    }
+
+    const { data: codigoData, error: codigoError } = await supabase
+      .from('codigos_recuperacion')
+      .select('*')
+      .eq('usuario_id', usuario_id)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expira_en', new Date().toISOString())
+      .single();
+
+    if (codigoError || !codigoData) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido o expirado' 
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(nueva_password, 10);
+
+    const { error: updateError } = await supabase
+      .from('usuarios')
+      .update({ 
+        pass: hashedPassword,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', usuario_id);
+
+    if (updateError) {
+      console.error('❌ Error actualizando contraseña:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar la contraseña' 
+      });
+    }
+
+    await supabase
+      .from('codigos_recuperacion')
+      .update({ usado: true })
+      .eq('id', codigoData.id);
+
+    console.log('✅ Contraseña restablecida para usuario ID:', usuario_id);
+    
+    res.json({
+      success: true,
+      message: 'Contraseña restablecida correctamente'
+    });
+
+  } catch (error) {
+    console.error('❌ Error restableciendo contraseña:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al restablecer la contraseña' 
+    });
+  }
+});
+
+// Test de recuperación
+app.get('/api/recupera/test', async (req, res) => {
+  try {
+    const testData = {
+      usuario: 'testuser',
+      nombre_usuario: 'Usuario de Prueba',
+      email: 'alvaroramirezm8@gmail.com',
+      codigo: '123456'
+    };
+
+    console.log('🧪 Probando envío de email de recuperación...');
+    
+    const result = await enviarEmailRecuperacion(testData);
+    
+    res.json({ 
+      success: true, 
+      message: '✅ Email de recuperación enviado correctamente',
+      to: testData.email,
+      result: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en test de recuperación:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // ========== RUTAS DE EMAIL PARA RESERVAS ==========
 app.get('/api/reservas/test-email', async (req, res) => {
@@ -793,7 +983,7 @@ app.get('/api/health', (req, res) => {
     secureAuth: true,
     endpoints: {
       auth: '/api/auth/*',
-      login: '/api/login (legacy)',
+      login: '/api/auth/login',
       verify: '/api/auth/verify',
       refresh: '/api/auth/refresh',
       logout: '/api/auth/logout'
@@ -824,7 +1014,7 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// REGISTRO
+// REGISTRO (actualizada para usar el nuevo sistema de tokens)
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2, clave_admin } = req.body;
@@ -950,25 +1140,36 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // Generar token
-    const token = jwt.sign(
+    // Generar token usando el nuevo sistema
+    const accessToken = jwt.sign(
       { 
         id: newUser.id, 
         usuario: newUser.usuario,
         nombre: newUser.nombre,
         email: newUser.correo,
-        rol: newUser.rol
+        rol: newUser.rol,
+        dni: newUser.dni,
+        telefono: newUser.telefono,
+        type: 'access'
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    // También configurar cookies para registro
+    res.cookie('auth_token', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000
+    });
 
     console.log('✅ Usuario registrado exitosamente:', newUser.usuario);
     
     res.json({
       success: true,
       message: `Usuario registrado correctamente como ${rol}`,
-      token: token,
+      token: accessToken,
       user: {
         id: newUser.id,
         usuario: newUser.usuario,
@@ -991,7 +1192,7 @@ app.post('/api/registro', async (req, res) => {
 
 // ========== RUTAS DE DATOS BÁSICAS ==========
 
-// POLIDEPORTIVOS
+// POLIDEPORTIVOS (pública)
 app.get('/api/polideportivos', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1013,7 +1214,7 @@ app.get('/api/polideportivos', async (req, res) => {
   }
 });
 
-// PISTAS
+// PISTAS (pública)
 app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
@@ -1110,7 +1311,6 @@ app.listen(PORT, () => {
   console.log(`   • Verificar: GET /api/auth/verify`);
   console.log(`   • Refrescar: POST /api/auth/refresh`);
   console.log(`   • Logout: POST /api/auth/logout`);
-  console.log(`   • Login tradicional: POST /api/login`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
 });
