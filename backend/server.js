@@ -40,7 +40,7 @@ const emailjsConfig = {
 
 // ========== IMPORTAR ROUTERS ==========
 // Necesitas importar el router de reservas que creaste anteriormente
-const reservasRouter = require('./routes/reservas'); // Ajusta la ruta según tu estructura
+const reservasRouter = require('./rutas/reservas'); // Ajusta la ruta según tu estructura
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
