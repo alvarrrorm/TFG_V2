@@ -39,10 +39,15 @@ const emailjsConfig = {
 };
 
 // ========== MIDDLEWARE ==========
+// ========== MIDDLEWARE ==========
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://tusitio.com'] // Cambia esto por tu dominio
-    : ['http://localhost:3000', 'http://localhost:3001'],
+  origin: [
+    'https://www.deppo.es',          // Tu dominio principal
+    'https://deppo.es',              // Versión sin www
+    'http://localhost:3000',         // Desarrollo local
+    'http://localhost:3001',         // Desarrollo local alternativo
+    'http://localhost:8080'          // Si pruebas localmente
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
@@ -167,9 +172,9 @@ async function enviarEmailRecuperacion(datos) {
       user_name: datos.nombre_usuario || 'Usuario',
       user_username: datos.usuario || 'Usuario',
       verification_code: datos.codigo,
-      app_name: 'Depo',
+      app_name: 'Deppo',
       expiration_time: '15 minutos',
-      support_email: 'soporte@depo.com',
+      support_email: 'soporte@deppo.com',
       current_year: new Date().getFullYear(),
       to_email: datos.email
     };
