@@ -3,7 +3,6 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-const CLAVE_ADMIN = 'admin1234';
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
 
 // Función para validar DNI
@@ -56,7 +55,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // ✅ RECIBIR LOS CAMPOS EXACTOS DEL FRONTEND
+    // ✅ RECIBIR LOS CAMPOS EXACTOS DEL FRONTEND (SIN CLAVE_ADMIN)
     const { 
       nombre, 
       correo, 
@@ -64,8 +63,7 @@ router.post('/', async (req, res) => {
       dni, 
       telefono, 
       pass, 
-      pass_2, 
-      clave_admin 
+      pass_2 
     } = req.body;
 
     console.log('📝 Datos recibidos en registro:', { 
@@ -75,8 +73,7 @@ router.post('/', async (req, res) => {
       dni, 
       telefono: telefono || 'No proporcionado', 
       pass: pass ? '***' : 'FALTANTE', 
-      pass_2: pass_2 ? '***' : 'FALTANTE', 
-      clave_admin: clave_admin ? '***' : 'No proporcionada' 
+      pass_2: pass_2 ? '***' : 'FALTANTE' 
     });
 
     // ========== VALIDACIONES ==========
@@ -131,9 +128,6 @@ router.post('/', async (req, res) => {
         error: 'La contraseña debe tener al menos 6 caracteres' 
       });
     }
-
-    // Determinar rol
-    const rol = (clave_admin === CLAVE_ADMIN) ? 'admin' : 'user';
 
     // ========== VERIFICAR DUPLICADOS ==========
 
@@ -213,13 +207,14 @@ router.post('/', async (req, res) => {
     const hashedPassword = await bcrypt.hash(pass, 10);
     
     // Preparar datos del usuario
+    // TODOS los nuevos registros son 'user' por defecto
     const datosUsuario = {
       nombre: nombre.trim(),
       correo: correo.trim().toLowerCase(),
       usuario: usuario.trim(),
       dni: dni.trim().toUpperCase(),
       pass: hashedPassword,
-      rol: rol,
+      rol: 'user', // ← FIJO: siempre 'user' en registro
       fecha_creacion: new Date().toISOString()
     };
     
@@ -232,7 +227,7 @@ router.post('/', async (req, res) => {
       usuario: datosUsuario.usuario,
       correo: datosUsuario.correo,
       dni: datosUsuario.dni,
-      rol: datosUsuario.rol,
+      rol: datosUsuario.rol, // Siempre será 'user'
       tieneTelefono: !!datosUsuario.telefono
     });
 
@@ -293,7 +288,7 @@ router.post('/', async (req, res) => {
     // Respuesta exitosa
     res.json({ 
       success: true,
-      message: `Usuario registrado correctamente como ${rol}`,
+      message: 'Usuario registrado correctamente',
       token: token,
       user: {
         id: nuevoUsuario.id,
