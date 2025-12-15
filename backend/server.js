@@ -26,12 +26,14 @@ const refreshTokens = new Map();
 const ROLES = {
   SUPER_ADMIN: 'super_admin',
   ADMIN_POLIDEPORTIVO: 'admin_poli',
+  ADMIN: 'admin',
   USUARIO: 'usuario'
 };
 
 const NIVELES_PERMISO = {
   [ROLES.SUPER_ADMIN]: 100,
   [ROLES.ADMIN_POLIDEPORTIVO]: 50,
+  [ROLES.ADMIN]: 40,
   [ROLES.USUARIO]: 10
 };
 
@@ -151,7 +153,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ========== MIDDLEWARE PARA VERIFICAR ROLES ==========
-// Middleware para verificar que es admin (super_admin o admin_poli)
+// Middleware para verificar que es admin (super_admin, admin_poli o admin)
 const verificarEsAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -159,7 +161,7 @@ const verificarEsAdmin = (req, res, next) => {
   
   const { rol } = req.user;
   
-  if (rol !== ROLES.SUPER_ADMIN && rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+  if (rol !== ROLES.SUPER_ADMIN && rol !== ROLES.ADMIN_POLIDEPORTIVO && rol !== ROLES.ADMIN) {
     return res.status(403).json({ 
       success: false, 
       error: 'Acceso denegado. Se requiere rol de administrador' 
@@ -548,7 +550,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
         id: reservaActualizada.id,
         nombre_usuario: reservaActualizada.usuarios?.nombre || reservaActualizada.nombre_usuario,
         email: reservaActualizada.usuarios?.correo || reservaActualizada.email_usuario,
-        polideportivo_nombre: 'Polideportivo', // Podrías obtenerlo de otra tabla
+        polideportivo_nombre: 'Polideportivo',
         pista_nombre: reservaActualizada.pistas?.nombre,
         fecha: reservaActualizada.fecha,
         hora_inicio: reservaActualizada.hora_inicio,
@@ -1021,7 +1023,7 @@ app.put('/api/admin/usuarios/:id/rol', authenticateToken, verificarEsSuperAdmin,
     }
     
     // Verificar roles válidos
-    const rolesValidos = [ROLES.SUPER_ADMIN, ROLES.ADMIN_POLIDEPORTIVO, ROLES.USUARIO];
+    const rolesValidos = [ROLES.SUPER_ADMIN, ROLES.ADMIN_POLIDEPORTIVO, ROLES.ADMIN, ROLES.USUARIO];
     if (!rolesValidos.includes(nuevoRol)) {
       return res.status(400).json({ 
         success: false, 
@@ -1138,10 +1140,17 @@ app.post('/api/auth/login', async (req, res) => {
       nombre: user.nombre,
       email: user.correo,
       dni: user.dni,
-      rol: user.rol || ROLES.USUARIO,
+      rol: user.rol || ROLES.USUARIO, // IMPORTANTE: Asegurar que siempre haya un rol
       telefono: user.telefono,
       polideportivo_id: user.polideportivo_id || null
     };
+
+    console.log('👤 Datos del usuario para token:', {
+      id: userData.id,
+      usuario: userData.usuario,
+      rol: userData.rol,
+      polideportivo_id: userData.polideportivo_id
+    });
 
     // Generar token de acceso (expira en 24 horas)
     const accessToken = jwt.sign(
@@ -1190,12 +1199,95 @@ app.post('/api/auth/login', async (req, res) => {
       success: true,
       message: 'Login exitoso',
       token: accessToken,
-      user: userData,
+      user: userData, // ← Esto es lo que recibe el frontend
       expiresIn: 24 * 60 * 60 // 24 horas en segundos
     });
 
   } catch (error) {
     console.error('❌ Error en login seguro:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
+    });
+  }
+});
+
+// Login tradicional (mantener compatibilidad)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { usuario, password } = req.body;
+    
+    console.log('🔐 Login tradicional para:', usuario);
+    
+    if (!usuario || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Usuario y contraseña requeridos'
+      });
+    }
+
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('usuario', usuario)
+      .single();
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.pass);
+
+    if (!passwordValid) {
+      return res.status(401).json({
+        success: false,
+        error: 'Usuario o contraseña incorrectos'
+      });
+    }
+
+    // Preparar datos del usuario con polideportivo_id
+    const userData = {
+      id: user.id,
+      usuario: user.usuario,
+      nombre: user.nombre,
+      email: user.correo,
+      dni: user.dni,
+      rol: user.rol || ROLES.USUARIO, // Asegurar que siempre haya rol
+      telefono: user.telefono,
+      polideportivo_id: user.polideportivo_id || null
+    };
+
+    console.log('👤 Datos usuario (tradicional):', {
+      id: userData.id,
+      usuario: userData.usuario,
+      rol: userData.rol,
+      polideportivo_id: userData.polideportivo_id
+    });
+
+    // Generar token
+    const token = jwt.sign(
+      { 
+        ...userData,
+        type: 'access'
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Login exitoso:', usuario);
+    
+    res.json({
+      success: true,
+      message: 'Login exitoso',
+      token: token,
+      user: userData // ← Asegurar que enviamos todos los datos
+    });
+
+  } catch (error) {
+    console.error('❌ Error en login:', error);
     res.status(500).json({
       success: false,
       error: 'Error interno del servidor'
@@ -1309,80 +1401,6 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
     });
   } catch (error) {
     console.error('Error en logout:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
-
-// Login tradicional (mantener compatibilidad)
-app.post('/api/login', async (req, res) => {
-  try {
-    const { usuario, password } = req.body;
-    
-    console.log('🔐 Login tradicional para:', usuario);
-    
-    if (!usuario || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Usuario y contraseña requeridos'
-      });
-    }
-
-    const { data: user, error } = await supabase
-      .from('usuarios')
-      .select('*')
-      .eq('usuario', usuario)
-      .single();
-
-    if (error || !user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.pass);
-
-    if (!passwordValid) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    // Preparar datos del usuario con polideportivo_id
-    const userData = {
-      id: user.id,
-      usuario: user.usuario,
-      nombre: user.nombre,
-      email: user.correo,
-      rol: user.rol || ROLES.USUARIO,
-      polideportivo_id: user.polideportivo_id || null
-    };
-
-    // Generar token
-    const token = jwt.sign(
-      { 
-        ...userData,
-        type: 'access'
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    console.log('✅ Login exitoso:', usuario);
-    
-    res.json({
-      success: true,
-      message: 'Login exitoso',
-      token: token,
-      user: userData
-    });
-
-  } catch (error) {
-    console.error('❌ Error en login:', error);
     res.status(500).json({
       success: false,
       error: 'Error interno del servidor'
@@ -2049,6 +2067,7 @@ app.listen(PORT, () => {
   console.log(`🔑 Sistema de roles jerárquicos ACTIVADO`);
   console.log(`   • ${ROLES.SUPER_ADMIN} (nivel ${NIVELES_PERMISO[ROLES.SUPER_ADMIN]})`);
   console.log(`   • ${ROLES.ADMIN_POLIDEPORTIVO} (nivel ${NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]})`);
+  console.log(`   • ${ROLES.ADMIN} (nivel ${NIVELES_PERMISO[ROLES.ADMIN]})`);
   console.log(`   • ${ROLES.USUARIO} (nivel ${NIVELES_PERMISO[ROLES.USUARIO]})`);
   console.log(`🔑 Endpoints principales:`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
