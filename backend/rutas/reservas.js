@@ -741,8 +741,7 @@ router.get('/', authenticateToken, async (req, res) => {
       .select(`
         *,
         pistas!inner(nombre, tipo),
-        polideportivos!inner(nombre),
-        usuarios!inner(usuario, correo, telefono)
+        polideportivos!inner(nombre)
       `)
       .order('fecha', { ascending: false })
       .order('hora_inicio', { ascending: false });
@@ -787,18 +786,46 @@ router.get('/', authenticateToken, async (req, res) => {
     
     console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
     
-    const reservasConLudoteca = (reservas || []).map(reserva => ({
-      ...reserva,
-      ludoteca: false,
-      pistaNombre: reserva.pistas?.nombre,
-      pistaTipo: reserva.pistas?.tipo,
-      polideportivo_nombre: reserva.polideportivos?.nombre,
-      usuario_login: reserva.usuarios?.usuario,
-      usuario_email: reserva.usuarios?.correo,
-      usuario_telefono: reserva.usuarios?.telefono
+    // Obtener información de usuarios por separado si es necesario
+    const reservasConInfo = await Promise.all((reservas || []).map(async (reserva) => {
+      let usuarioInfo = {
+        usuario_login: 'N/A',
+        usuario_email: 'N/A',
+        usuario_telefono: 'N/A'
+      };
+      
+      // Solo buscar información del usuario si tenemos usuario_id
+      if (reserva.usuario_id && reserva.usuario_id !== 0) {
+        try {
+          const { data: usuario, error: usuarioError } = await supabase
+            .from('usuarios')
+            .select('usuario, correo, telefono')
+            .eq('id', reserva.usuario_id)
+            .single();
+          
+          if (!usuarioError && usuario) {
+            usuarioInfo = {
+              usuario_login: usuario.usuario || 'N/A',
+              usuario_email: usuario.correo || 'N/A',
+              usuario_telefono: usuario.telefono || 'N/A'
+            };
+          }
+        } catch (usuarioErr) {
+          console.warn('⚠️  No se pudo obtener info del usuario ID:', reserva.usuario_id, usuarioErr);
+        }
+      }
+      
+      return {
+        ...reserva,
+        ludoteca: false,
+        pistaNombre: reserva.pistas?.nombre,
+        pistaTipo: reserva.pistas?.tipo,
+        polideportivo_nombre: reserva.polideportivos?.nombre,
+        ...usuarioInfo
+      };
     }));
 
-    res.json({ success: true, data: reservasConLudoteca });
+    res.json({ success: true, data: reservasConInfo });
   } catch (error) {
     console.error('❌ Error al obtener reservas:', error);
     return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
