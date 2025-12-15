@@ -53,7 +53,13 @@ const emailjsConfig = {
 
 // ========== IMPORTAR ROUTERS ==========
 const reservasRouter = require('./rutas/reservas');
-const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, middlewarePolideportivo } = require('./rutas/usuarios');
+const pistasRouter = require('./rutas/pistas');
+const polideportivosRouter = require('./rutas/polideportivos');
+const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, ROLES: USUARIOS_ROLES, NIVELES_PERMISO: USUARIOS_NIVELES } = require('./rutas/usuarios');
+
+// Sincronizar los roles importados con los locales
+Object.assign(ROLES, USUARIOS_ROLES || {});
+Object.assign(NIVELES_PERMISO, USUARIOS_NIVELES || {});
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
@@ -142,6 +148,68 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// ========== MIDDLEWARE PARA VERIFICAR ROLES ==========
+// Middleware para verificar que es admin (super_admin o admin_poli)
+const verificarEsAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'No autenticado' });
+  }
+  
+  const { rol } = req.user;
+  
+  if (rol !== ROLES.SUPER_ADMIN && rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requiere rol de administrador' 
+    });
+  }
+  
+  next();
+};
+
+// Middleware para verificar que es super_admin
+const verificarEsSuperAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'No autenticado' });
+  }
+  
+  const { rol } = req.user;
+  
+  if (rol !== ROLES.SUPER_ADMIN) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requiere rol de super administrador' 
+    });
+  }
+  
+  next();
+};
+
+// Middleware para verificar que es admin_poli
+const verificarEsAdminPoli = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, error: 'No autenticado' });
+  }
+  
+  const { rol, polideportivo_id } = req.user;
+  
+  if (rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requiere rol de administrador de polideportivo' 
+    });
+  }
+  
+  if (!polideportivo_id) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. No tienes un polideportivo asignado' 
+    });
+  }
+  
+  next();
 };
 
 // ========== FUNCIONES AUXILIARES ==========
@@ -324,10 +392,693 @@ app.set('enviarEmailConfirmacion', enviarEmailConfirmacionReserva);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('ROLES', ROLES);
 app.set('NIVELES_PERMISO', NIVELES_PERMISO);
+app.set('verificarEsAdmin', verificarEsAdmin);
+app.set('verificarEsSuperAdmin', verificarEsSuperAdmin);
+app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 
 // ========== REGISTRAR ROUTERS ==========
 app.use('/api/reservas', reservasRouter);
+app.use('/api/pistas', pistasRouter);
+app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/usuarios', usuariosRouter);
+
+// ========== RUTAS ESPECÍFICAS PARA ADMIN_POLI ==========
+
+// Ruta para obtener datos específicos del polideportivo del admin_poli
+app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { polideportivo_id } = req.user;
+    
+    console.log('🏢 Obteniendo polideportivo para admin_poli:', polideportivo_id);
+    
+    const { data: polideportivo, error } = await supabase
+      .from('polideportivos')
+      .select('*')
+      .eq('id', polideportivo_id)
+      .single();
+    
+    if (error || !polideportivo) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Polideportivo no encontrado' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: polideportivo
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo polideportivo:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para obtener reservas del polideportivo del admin_poli
+app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { polideportivo_id } = req.user;
+    const { fecha, estado } = req.query;
+    
+    console.log('📋 Obteniendo reservas del polideportivo:', polideportivo_id);
+    
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        usuarios!inner(nombre, usuario, correo)
+      `)
+      .eq('polideportivo_id', polideportivo_id)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+    
+    if (fecha) {
+      query = query.eq('fecha', fecha);
+    }
+    
+    if (estado) {
+      query = query.eq('estado', estado);
+    }
+    
+    const { data: reservas, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error obteniendo reservas:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener reservas' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: reservas || []
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo reservas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para confirmar reserva (admin_poli)
+app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    
+    console.log('✅ Confirmando reserva ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
+    const { data: reserva, error: reservaError } = await supabase
+      .from('reservas')
+      .select('*')
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (reservaError || !reserva) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos' 
+      });
+    }
+    
+    if (reserva.estado !== 'pendiente') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La reserva ya ha sido confirmada o cancelada' 
+      });
+    }
+    
+    // Actualizar reserva
+    const { data: reservaActualizada, error: updateError } = await supabase
+      .from('reservas')
+      .update({ 
+        estado: 'confirmada',
+        fecha_confirmacion: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        pistas!inner(nombre),
+        usuarios!inner(nombre, correo)
+      `)
+      .single();
+    
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al confirmar la reserva' 
+      });
+    }
+    
+    // Enviar email de confirmación
+    try {
+      const datosEmail = {
+        id: reservaActualizada.id,
+        nombre_usuario: reservaActualizada.usuarios?.nombre || reservaActualizada.nombre_usuario,
+        email: reservaActualizada.usuarios?.correo || reservaActualizada.email_usuario,
+        polideportivo_nombre: 'Polideportivo', // Podrías obtenerlo de otra tabla
+        pista_nombre: reservaActualizada.pistas?.nombre,
+        fecha: reservaActualizada.fecha,
+        hora_inicio: reservaActualizada.hora_inicio,
+        hora_fin: reservaActualizada.hora_fin,
+        precio: reservaActualizada.precio,
+        pistas: { nombre: reservaActualizada.pistas?.nombre }
+      };
+      
+      if (datosEmail.email) {
+        await enviarEmailConfirmacionReserva(datosEmail);
+      }
+    } catch (emailError) {
+      console.error('⚠️  Error enviando email:', emailError);
+      // No fallamos la operación si el email falla
+    }
+    
+    res.json({
+      success: true,
+      message: 'Reserva confirmada correctamente',
+      data: reservaActualizada
+    });
+    
+  } catch (error) {
+    console.error('❌ Error confirmando reserva:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para cancelar reserva (admin_poli)
+app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    
+    console.log('❌ Cancelando reserva ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
+    const { data: reserva, error: reservaError } = await supabase
+      .from('reservas')
+      .select('*')
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (reservaError || !reserva) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos' 
+      });
+    }
+    
+    if (reserva.estado === 'cancelada') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La reserva ya está cancelada' 
+      });
+    }
+    
+    // Actualizar reserva
+    const { data: reservaActualizada, error: updateError } = await supabase
+      .from('reservas')
+      .update({ 
+        estado: 'cancelada',
+        fecha_cancelacion: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        pistas!inner(nombre)
+      `)
+      .single();
+    
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al cancelar la reserva' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Reserva cancelada correctamente',
+      data: reservaActualizada
+    });
+    
+  } catch (error) {
+    console.error('❌ Error cancelando reserva:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para obtener pistas del polideportivo del admin_poli
+app.get('/api/admin-poli/pistas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { polideportivo_id } = req.user;
+    const { tipo, disponible } = req.query;
+    
+    console.log('🎾 Obteniendo pistas del polideportivo:', polideportivo_id);
+    
+    let query = supabase
+      .from('pistas')
+      .select('*')
+      .eq('polideportivo_id', polideportivo_id)
+      .order('tipo')
+      .order('nombre');
+    
+    if (tipo) {
+      query = query.eq('tipo', tipo);
+    }
+    
+    if (disponible !== undefined) {
+      query = query.eq('disponible', disponible === 'true');
+    }
+    
+    const { data: pistas, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error obteniendo pistas:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener pistas' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: pistas || []
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo pistas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para cambiar estado de mantenimiento de pista (admin_poli)
+app.patch('/api/admin-poli/pistas/:id/mantenimiento', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    const { enMantenimiento, motivo } = req.body;
+    
+    console.log('🛠️ Cambiando mantenimiento pista ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    // Verificar que la pista pertenece al polideportivo del admin
+    const { data: pista, error: pistaError } = await supabase
+      .from('pistas')
+      .select('*')
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (pistaError || !pista) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Pista no encontrada o no tienes permisos' 
+      });
+    }
+    
+    // Actualizar pista
+    const { data: pistaActualizada, error: updateError } = await supabase
+      .from('pistas')
+      .update({ 
+        disponible: !enMantenimiento,
+        motivo_mantenimiento: motivo || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('❌ Error actualizando pista:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar el estado de mantenimiento' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`,
+      data: pistaActualizada
+    });
+    
+  } catch (error) {
+    console.error('❌ Error cambiando mantenimiento:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para cambiar precio de pista (admin_poli)
+app.patch('/api/admin-poli/pistas/:id/precio', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    const { precio } = req.body;
+    
+    console.log('💰 Cambiando precio pista ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    if (!precio || isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Precio inválido. Debe ser un número mayor a 0' 
+      });
+    }
+    
+    // Verificar que la pista pertenece al polideportivo del admin
+    const { data: pista, error: pistaError } = await supabase
+      .from('pistas')
+      .select('*')
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (pistaError || !pista) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Pista no encontrada o no tienes permisos' 
+      });
+    }
+    
+    // Actualizar pista
+    const { data: pistaActualizada, error: updateError } = await supabase
+      .from('pistas')
+      .update({ 
+        precio: parseFloat(precio),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('❌ Error actualizando pista:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar el precio' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Precio actualizado correctamente',
+      data: pistaActualizada
+    });
+    
+  } catch (error) {
+    console.error('❌ Error cambiando precio:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para obtener estadísticas del polideportivo (admin_poli)
+app.get('/api/admin-poli/estadisticas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { polideportivo_id } = req.user;
+    const { periodo = 'mes' } = req.query;
+    
+    console.log('📊 Obteniendo estadísticas para polideportivo:', polideportivo_id);
+    
+    const hoy = new Date();
+    let fechaInicio = new Date();
+    
+    // Calcular fecha de inicio según el periodo
+    switch (periodo) {
+      case 'dia':
+        fechaInicio.setHours(0, 0, 0, 0);
+        break;
+      case 'semana':
+        fechaInicio.setDate(fechaInicio.getDate() - 7);
+        break;
+      case 'mes':
+        fechaInicio.setMonth(fechaInicio.getMonth() - 1);
+        break;
+      case 'año':
+        fechaInicio.setFullYear(fechaInicio.getFullYear() - 1);
+        break;
+      default:
+        fechaInicio.setMonth(fechaInicio.getMonth() - 1);
+    }
+    
+    // Estadísticas de reservas
+    const { data: reservasData, error: reservasError } = await supabase
+      .from('reservas')
+      .select('estado, precio, fecha')
+      .eq('polideportivo_id', polideportivo_id)
+      .gte('fecha', fechaInicio.toISOString().split('T')[0])
+      .lte('fecha', hoy.toISOString().split('T')[0]);
+    
+    if (reservasError) {
+      console.error('Error al obtener estadísticas de reservas:', reservasError);
+    }
+    
+    // Calcular estadísticas
+    let totalReservas = 0;
+    let reservasConfirmadas = 0;
+    let reservasPendientes = 0;
+    let reservasCanceladas = 0;
+    let ingresosTotales = 0;
+    
+    if (reservasData) {
+      totalReservas = reservasData.length;
+      reservasData.forEach(reserva => {
+        if (reserva.estado === 'confirmada') {
+          reservasConfirmadas++;
+          ingresosTotales += parseFloat(reserva.precio || 0);
+        } else if (reserva.estado === 'pendiente') {
+          reservasPendientes++;
+        } else if (reserva.estado === 'cancelada') {
+          reservasCanceladas++;
+        }
+      });
+    }
+    
+    // Estadísticas de pistas
+    const { data: pistasData, error: pistasError } = await supabase
+      .from('pistas')
+      .select('id, nombre, tipo, precio, disponible')
+      .eq('polideportivo_id', polideportivo_id);
+    
+    if (pistasError) {
+      console.error('Error al obtener estadísticas de pistas:', pistasError);
+    }
+    
+    let totalPistas = 0;
+    let pistasDisponibles = 0;
+    const pistasPorTipo = {};
+    
+    if (pistasData) {
+      totalPistas = pistasData.length;
+      pistasData.forEach(pista => {
+        if (pista.disponible) {
+          pistasDisponibles++;
+        }
+        
+        if (pistasPorTipo[pista.tipo]) {
+          pistasPorTipo[pista.tipo]++;
+        } else {
+          pistasPorTipo[pista.tipo] = 1;
+        }
+      });
+    }
+    
+    const estadisticas = {
+      periodo: {
+        tipo: periodo,
+        fecha_inicio: fechaInicio.toISOString().split('T')[0],
+        fecha_fin: hoy.toISOString().split('T')[0]
+      },
+      reservas: {
+        total: totalReservas,
+        confirmadas: reservasConfirmadas,
+        pendientes: reservasPendientes,
+        canceladas: reservasCanceladas,
+        tasa_confirmacion: totalReservas > 0 ? (reservasConfirmadas / totalReservas * 100).toFixed(1) + '%' : '0%'
+      },
+      ingresos: {
+        total: parseFloat(ingresosTotales.toFixed(2)),
+        promedio_por_reserva: reservasConfirmadas > 0 ? parseFloat((ingresosTotales / reservasConfirmadas).toFixed(2)) : 0
+      },
+      pistas: {
+        total: totalPistas,
+        disponibles: pistasDisponibles,
+        tasa_disponibilidad: totalPistas > 0 ? (pistasDisponibles / totalPistas * 100).toFixed(1) + '%' : '0%',
+        por_tipo: pistasPorTipo
+      }
+    };
+    
+    res.json({
+      success: true,
+      data: estadisticas
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// ========== RUTAS ESPECÍFICAS PARA ADMIN (super_admin y admin general) ==========
+
+// Health check de administración
+app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Panel de administración funcionando',
+    user: req.user,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Ruta para obtener todos los usuarios (admin)
+app.get('/api/admin/usuarios', authenticateToken, verificarEsAdmin, async (req, res) => {
+  try {
+    const { rol, search } = req.query;
+    
+    console.log('👥 Admin obteniendo usuarios');
+    
+    let query = supabase
+      .from('usuarios')
+      .select('id, nombre, usuario, correo, dni, telefono, rol, polideportivo_id, fecha_creacion')
+      .order('fecha_creacion', { ascending: false });
+    
+    if (rol) {
+      query = query.eq('rol', rol);
+    }
+    
+    if (search) {
+      query = query.or(`nombre.ilike.%${search}%,usuario.ilike.%${search}%,correo.ilike.%${search}%`);
+    }
+    
+    const { data: usuarios, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error obteniendo usuarios:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener usuarios' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: usuarios || []
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo usuarios:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para cambiar rol de usuario (admin)
+app.put('/api/admin/usuarios/:id/rol', authenticateToken, verificarEsSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nuevoRol, polideportivo_id } = req.body;
+    const adminId = req.user.id;
+    
+    console.log('👑 Cambiando rol usuario ID:', id, 'nuevo rol:', nuevoRol);
+    
+    if (!nuevoRol) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Nuevo rol es requerido' 
+      });
+    }
+    
+    // Verificar roles válidos
+    const rolesValidos = [ROLES.SUPER_ADMIN, ROLES.ADMIN_POLIDEPORTIVO, ROLES.USUARIO];
+    if (!rolesValidos.includes(nuevoRol)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Rol no válido' 
+      });
+    }
+    
+    // No permitir cambiar tu propio rol
+    if (parseInt(id) === adminId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No puedes cambiar tu propio rol' 
+      });
+    }
+    
+    const updateData = {
+      rol: nuevoRol,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Si es admin_poli, asignar polideportivo_id si se proporciona
+    if (nuevoRol === ROLES.ADMIN_POLIDEPORTIVO && polideportivo_id) {
+      updateData.polideportivo_id = polideportivo_id;
+    } else if (nuevoRol !== ROLES.ADMIN_POLIDEPORTIVO) {
+      updateData.polideportivo_id = null;
+    }
+    
+    // Actualizar usuario
+    const { data: usuarioActualizado, error: updateError } = await supabase
+      .from('usuarios')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, nombre, usuario, correo, rol, polideportivo_id')
+      .single();
+    
+    if (updateError) {
+      console.error('❌ Error actualizando usuario:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar el rol' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: `Rol actualizado a ${nuevoRol}`,
+      data: usuarioActualizado
+    });
+    
+  } catch (error) {
+    console.error('❌ Error cambiando rol:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
 
 // ========== RUTAS DE AUTENTICACIÓN SEGURA ==========
 
@@ -387,9 +1138,9 @@ app.post('/api/auth/login', async (req, res) => {
       nombre: user.nombre,
       email: user.correo,
       dni: user.dni,
-      rol: user.rol || ROLES.USUARIO, // Usar ROLES.USUARIO
+      rol: user.rol || ROLES.USUARIO,
       telefono: user.telefono,
-      polideportivo_id: user.polideportivo_id || null // Agregar polideportivo_id
+      polideportivo_id: user.polideportivo_id || null
     };
 
     // Generar token de acceso (expira en 24 horas)
@@ -963,11 +1714,13 @@ app.get('/api/health', (req, res) => {
       verify: '/api/auth/verify',
       refresh: '/api/auth/refresh',
       logout: '/api/auth/logout',
-      usuarios: '/api/usuarios/* (nuevo sistema de roles)',
+      usuarios: '/api/usuarios/*',
       reservas: '/api/reservas/*',
       polideportivos: '/api/polideportivos',
       pistas: '/api/pistas',
-      registro: '/api/registro'
+      registro: '/api/registro',
+      admin: '/api/admin/* (super_admin y admin)',
+      adminPoli: '/api/admin-poli/* (admin_poli con polideportivo)'
     }
   });
 });
@@ -1044,7 +1797,7 @@ app.get('/api/pistas', async (req, res) => {
   }
 });
 
-// ========== REGISTRO (MODIFICADO - SIN CLAVE_ADMIN) ==========
+// ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2 } = req.body;
@@ -1098,7 +1851,7 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // TODOS los nuevos registros son 'usuario' por defecto usando ROLES
+    // TODOS los nuevos registros son 'usuario' por defecto
     const rol = ROLES.USUARIO;
 
     // Verificar duplicados
@@ -1210,7 +1963,7 @@ app.post('/api/registro', async (req, res) => {
   }
 });
 
-// ========== RUTA PARA CREAR SUPER_ADMIN INICIAL (SOLO DESARROLLO) ==========
+// ========== RUTA PARA CREAR SUPER_ADMIN INICIAL ==========
 if (process.env.NODE_ENV !== 'production') {
   app.post('/api/setup/super-admin', async (req, res) => {
     try {
@@ -1300,14 +2053,17 @@ app.listen(PORT, () => {
   console.log(`🔑 Endpoints principales:`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
   console.log(`   • Login tradicional: /api/login`);
-  console.log(`   • Usuarios: /api/usuarios/* (nuevo sistema de roles)`);
+  console.log(`   • Usuarios: /api/usuarios/*`);
   console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
+  console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
+  console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
   console.log(`   • Setup Super Admin (solo dev): /api/setup/super-admin`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
+  console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
 });
 
 process.on('SIGINT', () => {
