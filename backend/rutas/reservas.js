@@ -710,9 +710,9 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTAS PARA ADMIN_POLI Y SUPER_ADMIN
+// 👇 RUTA PRINCIPAL PARA OBTENER RESERVAS - CORREGIDA
 // Listar todas las reservas (con filtrado por polideportivo para admin_poli)
-router.get('/', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { nombre_usuario, usuario_id, fecha, estado, polideportivo_id } = req.query;
 
@@ -722,6 +722,18 @@ router.get('/', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtra
     usuario_id,
     polideportivo_id: req.user?.polideportivo_id 
   });
+
+  // Verificar permisos
+  if (!req.user?.rol || 
+      (req.user.rol !== ROLES.SUPER_ADMIN && 
+       req.user.rol !== ROLES.ADMIN && 
+       req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO)) {
+    console.log('🚫 Acceso denegado - Rol insuficiente:', req.user?.rol);
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de administrador' 
+    });
+  }
 
   try {
     let query = supabase
@@ -741,6 +753,10 @@ router.get('/', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtra
     }
     // Super_admin puede filtrar por polideportivo si lo especifica
     else if (req.user?.rol === ROLES.SUPER_ADMIN && polideportivo_id) {
+      query = query.eq('polideportivo_id', polideportivo_id);
+    }
+    // Admin general puede filtrar por polideportivo si lo especifica
+    else if (req.user?.rol === ROLES.ADMIN && polideportivo_id) {
       query = query.eq('polideportivo_id', polideportivo_id);
     }
 
@@ -791,11 +807,22 @@ router.get('/', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtra
 
 // 👇 RUTAS ESPECÍFICAS PARA ADMINISTRADORES
 // RUTA ESPECÍFICA: CONFIRMAR RESERVA (admin_poli o superior)
-router.put('/:id/confirmar', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
+router.put('/:id/confirmar', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
 
   console.log('✅ Confirmando reserva ID:', id, 'por admin:', req.user?.id);
+
+  // Verificar permisos
+  if (!req.user?.rol || 
+      (req.user.rol !== ROLES.SUPER_ADMIN && 
+       req.user.rol !== ROLES.ADMIN && 
+       req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO)) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de administrador' 
+    });
+  }
 
   if (!id || isNaN(parseInt(id))) {
     return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
@@ -1049,11 +1076,22 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
 });
 
 // RUTA ESPECÍFICA: REENVIAR EMAIL (admin_poli o superior)
-router.post('/:id/reenviar-email', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
+router.post('/:id/reenviar-email', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
 
   console.log(`📧 Reenviando email para reserva ID: ${id}`);
+
+  // Verificar permisos
+  if (!req.user?.rol || 
+      (req.user.rol !== ROLES.SUPER_ADMIN && 
+       req.user.rol !== ROLES.ADMIN && 
+       req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO)) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de administrador' 
+    });
+  }
 
   try {
     let query = supabase
@@ -1158,12 +1196,22 @@ router.post('/:id/reenviar-email', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLI
   }
 });
 
-// Eliminar una reserva (solo super_admin)
-router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+// Eliminar una reserva (solo super_admin y admin)
+router.delete('/:id', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
 
-  console.log('🗑️ Eliminando reserva ID:', id, 'por super_admin:', req.user?.id);
+  console.log('🗑️ Eliminando reserva ID:', id, 'por usuario:', req.user?.id);
+
+  // Verificar permisos
+  if (!req.user?.rol || 
+      (req.user.rol !== ROLES.SUPER_ADMIN && 
+       req.user.rol !== ROLES.ADMIN)) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de administrador' 
+    });
+  }
 
   try {
     const { data: reserva, error: selectError } = await supabase
@@ -1211,8 +1259,8 @@ router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (r
   }
 });
 
-// 👇 RUTA GENERAL PARA ACTUALIZAR RESERVA (solo super_admin)
-router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+// 👇 RUTA GENERAL PARA ACTUALIZAR RESERVA (solo super_admin y admin)
+router.put('/:id', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
   const {
@@ -1225,10 +1273,20 @@ router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req,
     ludoteca = false
   } = req.body;
 
-  console.log('📥 Actualizando reserva ID:', id, 'por super_admin:', req.user?.id);
+  console.log('📥 Actualizando reserva ID:', id, 'por usuario:', req.user?.id);
   console.log('Datos recibidos:', {
     pista_id, fecha, hora_inicio, hora_fin, estado, precio, ludoteca
   });
+
+  // Verificar permisos
+  if (!req.user?.rol || 
+      (req.user.rol !== ROLES.SUPER_ADMIN && 
+       req.user.rol !== ROLES.ADMIN)) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de administrador' 
+    });
+  }
 
   if (!id || isNaN(parseInt(id))) {
     return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
