@@ -22,6 +22,19 @@ const app = express();
 // Almacenamiento de refresh tokens (en producción usa Redis)
 const refreshTokens = new Map();
 
+// ========== SISTEMA DE ROLES JERÁRQUICOS ==========
+const ROLES = {
+  SUPER_ADMIN: 'super_admin',
+  ADMIN_POLIDEPORTIVO: 'admin_poli',
+  USUARIO: 'usuario'
+};
+
+const NIVELES_PERMISO = {
+  [ROLES.SUPER_ADMIN]: 100,
+  [ROLES.ADMIN_POLIDEPORTIVO]: 50,
+  [ROLES.USUARIO]: 10
+};
+
 // ========== CONFIGURACIÓN EMAILJS v5 ==========
 const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
 const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
@@ -39,8 +52,8 @@ const emailjsConfig = {
 };
 
 // ========== IMPORTAR ROUTERS ==========
-// Necesitas importar el router de reservas que creaste anteriormente
-const reservasRouter = require('./rutas/reservas'); // Ajusta la ruta según tu estructura
+const reservasRouter = require('./rutas/reservas');
+const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, middlewarePolideportivo } = require('./rutas/usuarios');
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
@@ -129,46 +142,6 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
-};
-
-// ========== MIDDLEWARE PARA VERIFICAR ADMIN ==========
-const verificarAdmin = (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'No autorizado - Token faltante' 
-      });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'No autorizado - Token inválido' 
-      });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    // Verificar que el usuario sea admin
-    if (decoded.rol !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Acceso denegado - Solo para administradores' 
-      });
-    }
-
-    req.user = decoded;
-    next();
-  } catch (error) {
-    console.error('Error en verificación de admin:', error);
-    return res.status(401).json({ 
-      success: false, 
-      error: 'Token inválido o expirado' 
-    });
-  }
 };
 
 // ========== FUNCIONES AUXILIARES ==========
@@ -349,10 +322,12 @@ async function obtenerEmailUsuario(userId) {
 app.set('supabase', supabase);
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacionReserva);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
+app.set('ROLES', ROLES);
+app.set('NIVELES_PERMISO', NIVELES_PERMISO);
 
 // ========== REGISTRAR ROUTERS ==========
-// Asegúrate de que el router de reservas tenga acceso al supabase
 app.use('/api/reservas', reservasRouter);
+app.use('/api/usuarios', usuariosRouter);
 
 // ========== RUTAS DE AUTENTICACIÓN SEGURA ==========
 
@@ -412,8 +387,9 @@ app.post('/api/auth/login', async (req, res) => {
       nombre: user.nombre,
       email: user.correo,
       dni: user.dni,
-      rol: user.rol || 'user',
-      telefono: user.telefono
+      rol: user.rol || ROLES.USUARIO, // Usar ROLES.USUARIO
+      telefono: user.telefono,
+      polideportivo_id: user.polideportivo_id || null // Agregar polideportivo_id
     };
 
     // Generar token de acceso (expira en 24 horas)
@@ -520,7 +496,7 @@ app.post('/api/auth/refresh', (req, res) => {
       // Buscar usuario para obtener datos actualizados
       const { data: user, error } = await supabase
         .from('usuarios')
-        .select('id, usuario, nombre, correo, dni, rol, telefono')
+        .select('id, usuario, nombre, correo, dni, rol, telefono, polideportivo_id')
         .eq('id', decoded.id)
         .single();
 
@@ -625,14 +601,21 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
+    // Preparar datos del usuario con polideportivo_id
+    const userData = {
+      id: user.id,
+      usuario: user.usuario,
+      nombre: user.nombre,
+      email: user.correo,
+      rol: user.rol || ROLES.USUARIO,
+      polideportivo_id: user.polideportivo_id || null
+    };
+
     // Generar token
     const token = jwt.sign(
       { 
-        id: user.id, 
-        usuario: user.usuario,
-        nombre: user.nombre,
-        email: user.correo,
-        rol: user.rol || 'user'
+        ...userData,
+        type: 'access'
       },
       JWT_SECRET,
       { expiresIn: '24h' }
@@ -644,13 +627,7 @@ app.post('/api/login', async (req, res) => {
       success: true,
       message: 'Login exitoso',
       token: token,
-      user: {
-        id: user.id,
-        usuario: user.usuario,
-        nombre: user.nombre,
-        email: user.correo,
-        rol: user.rol || 'user'
-      }
+      user: userData
     });
 
   } catch (error) {
@@ -660,186 +637,6 @@ app.post('/api/login', async (req, res) => {
       error: 'Error interno del servidor'
     });
   }
-});
-
-// ========== RUTAS DE GESTIÓN DE USUARIOS (SOLO ADMIN) ==========
-
-// Ruta 1: Obtener todos los usuarios (solo admin)
-app.get('/api/usuarios', verificarAdmin, async (req, res) => {
-  try {
-    console.log('👥 Obteniendo lista de usuarios...');
-    
-    const { data: usuarios, error } = await supabase
-      .from('usuarios')
-      .select('id, nombre, usuario, correo, dni, telefono, rol, fecha_creacion')
-      .order('fecha_creacion', { ascending: false });
-
-    if (error) {
-      console.error('Error al obtener usuarios:', error);
-      throw error;
-    }
-
-    console.log(`✅ Obtenidos ${usuarios?.length || 0} usuarios`);
-    
-    res.json({ 
-      success: true, 
-      data: usuarios || [] 
-    });
-  } catch (error) {
-    console.error('Error en GET /api/usuarios:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error al obtener usuarios: ' + error.message 
-    });
-  }
-});
-
-// Ruta 2: Cambiar rol de usuario (con confirmación de contraseña)
-app.put('/api/usuarios/cambiar-rol/:id', verificarAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { nuevoRol, passwordConfirmacion } = req.body;
-    const adminId = req.user.id;
-
-    console.log(`👑 Cambiando rol de usuario ${id} a ${nuevoRol} por admin ${adminId}`);
-
-    // Validaciones
-    if (!nuevoRol || !passwordConfirmacion) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Faltan datos: nuevoRol y passwordConfirmacion son obligatorios' 
-      });
-    }
-
-    if (!['admin', 'user'].includes(nuevoRol)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Rol no válido. Debe ser "admin" o "user"' 
-      });
-    }
-
-    // 1. Verificar que el admin existe y obtener su contraseña
-    const { data: adminData, error: adminError } = await supabase
-      .from('usuarios')
-      .select('pass')
-      .eq('id', adminId)
-      .single();
-
-    if (adminError || !adminData) {
-      console.error('Error al obtener admin:', adminError);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Administrador no encontrado' 
-      });
-    }
-
-    // 2. Verificar contraseña del admin
-    const passwordValida = await bcrypt.compare(passwordConfirmacion, adminData.pass);
-    if (!passwordValida) {
-      console.log('❌ Contraseña incorrecta para admin:', adminId);
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Contraseña incorrecta. No tienes permisos para realizar esta acción.' 
-      });
-    }
-
-    // 3. Verificar que el usuario a modificar existe
-    const { data: usuarioExistente, error: usuarioError } = await supabase
-      .from('usuarios')
-      .select('id')
-      .eq('id', id)
-      .single();
-
-    if (usuarioError || !usuarioExistente) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Usuario no encontrado' 
-      });
-    }
-
-    // 4. No permitir que un admin se quite a sí mismo los privilegios
-    if (parseInt(id) === adminId && nuevoRol === 'user') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No puedes quitarte a ti mismo los privilegios de administrador' 
-      });
-    }
-
-    // 5. Actualizar el rol
-    const { data: usuarioActualizado, error: updateError } = await supabase
-      .from('usuarios')
-      .update({ 
-        rol: nuevoRol,
-        fecha_actualizacion: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select('id, nombre, usuario, correo, rol, fecha_creacion')
-      .single();
-
-    if (updateError) {
-      console.error('Error al actualizar usuario:', updateError);
-      throw updateError;
-    }
-
-    // 6. Registrar en log
-    console.log(`✅ Usuario ${id} cambiado a rol ${nuevoRol} por admin ${adminId}`);
-
-    res.json({ 
-      success: true,
-      message: `Rol actualizado a ${nuevoRol}`,
-      data: usuarioActualizado
-    });
-
-  } catch (error) {
-    console.error('Error en PUT /api/usuarios/cambiar-rol:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error al cambiar rol: ' + error.message 
-    });
-  }
-});
-
-// Ruta 3: Obtener usuario por ID (solo admin)
-app.get('/api/usuarios/:id', verificarAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const { data: usuario, error } = await supabase
-      .from('usuarios')
-      .select('id, nombre, usuario, correo, dni, telefono, rol, fecha_creacion')
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      console.error('Error obteniendo usuario:', error);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Usuario no encontrado' 
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      data: usuario 
-    });
-  } catch (error) {
-    console.error('Error en GET /api/usuarios/:id:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error al obtener usuario' 
-    });
-  }
-});
-
-// ========== RUTAS PROTEGIDAS POR TOKEN ==========
-
-// Ejemplo de ruta protegida
-app.get('/api/protected/me', authenticateToken, (req, res) => {
-  res.json({
-    success: true,
-    message: 'Acceso a ruta protegida exitoso',
-    user: req.user
-  });
 });
 
 // ========== RUTAS DE RECUPERACIÓN ==========
@@ -1166,7 +963,7 @@ app.get('/api/health', (req, res) => {
       verify: '/api/auth/verify',
       refresh: '/api/auth/refresh',
       logout: '/api/auth/logout',
-      usuarios: '/api/usuarios/* (admin)',
+      usuarios: '/api/usuarios/* (nuevo sistema de roles)',
       reservas: '/api/reservas/*',
       polideportivos: '/api/polideportivos',
       pistas: '/api/pistas',
@@ -1301,9 +1098,8 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // TODOS los nuevos registros son 'user' por defecto
-    // Solo desde el panel de admin se podrán hacer admins
-    const rol = 'user';
+    // TODOS los nuevos registros son 'usuario' por defecto usando ROLES
+    const rol = ROLES.USUARIO;
 
     // Verificar duplicados
     const { data: existingUsers, error: errorCheck } = await supabase
@@ -1414,6 +1210,65 @@ app.post('/api/registro', async (req, res) => {
   }
 });
 
+// ========== RUTA PARA CREAR SUPER_ADMIN INICIAL (SOLO DESARROLLO) ==========
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/setup/super-admin', async (req, res) => {
+    try {
+      const { dni, nombre, correo, usuario, password } = req.body;
+      
+      if (!dni || !nombre || !correo || !usuario || !password) {
+        return res.status(400).json({
+          success: false,
+          error: 'Todos los campos son obligatorios'
+        });
+      }
+      
+      // Verificar si ya existe un super admin
+      const { data: existingAdmin, error: checkError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('rol', ROLES.SUPER_ADMIN)
+        .limit(1);
+        
+      if (checkError) throw checkError;
+      
+      if (existingAdmin && existingAdmin.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Ya existe un super administrador en el sistema'
+        });
+      }
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const { data, error } = await supabase
+        .from('usuarios')
+        .insert([{
+          dni,
+          nombre,
+          correo,
+          usuario,
+          pass: hashedPassword,
+          rol: ROLES.SUPER_ADMIN,
+          fecha_creacion: new Date().toISOString()
+        }])
+        .select()
+        .single();
+        
+      if (error) throw error;
+      
+      res.json({
+        success: true,
+        message: 'Super admin creado exitosamente',
+        data
+      });
+    } catch (error) {
+      console.error('Error creando super admin:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+}
+
 // ========== MANEJO DE ERRORES ==========
 app.use((req, res) => {
   res.status(404).json({ 
@@ -1438,14 +1293,19 @@ app.listen(PORT, () => {
   console.log(`🔐 Sistema de autenticación segura ACTIVADO`);
   console.log(`📧 EmailJS: v5.0.2 configurado`);
   console.log(`🌐 Supabase: ${supabaseUrl}`);
+  console.log(`🔑 Sistema de roles jerárquicos ACTIVADO`);
+  console.log(`   • ${ROLES.SUPER_ADMIN} (nivel ${NIVELES_PERMISO[ROLES.SUPER_ADMIN]})`);
+  console.log(`   • ${ROLES.ADMIN_POLIDEPORTIVO} (nivel ${NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]})`);
+  console.log(`   • ${ROLES.USUARIO} (nivel ${NIVELES_PERMISO[ROLES.USUARIO]})`);
   console.log(`🔑 Endpoints principales:`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
   console.log(`   • Login tradicional: /api/login`);
-  console.log(`   • Usuarios (admin): /api/usuarios, /api/usuarios/cambiar-rol/:id`);
+  console.log(`   • Usuarios: /api/usuarios/* (nuevo sistema de roles)`);
   console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
+  console.log(`   • Setup Super Admin (solo dev): /api/setup/super-admin`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
 });

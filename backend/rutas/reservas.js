@@ -2,6 +2,37 @@ const express = require('express');
 const router = express.Router();
 const emailjs = require('@emailjs/nodejs');
 
+// Importar middlewares y roles desde usuarios
+const { verificarRol, filtrarPorPolideportivo, ROLES, NIVELES_PERMISO } = require('./usuarios');
+
+// Middleware para verificar autenticación (si no está importado de server)
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Token de autenticación requerido' 
+    });
+  }
+
+  const jwt = require('jsonwebtoken');
+  const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Token inválido o expirado' 
+      });
+    }
+    
+    req.user = user;
+    next();
+  });
+};
+
 // Configuración de EmailJS
 const emailjsConfig = {
   reserva: {
@@ -104,34 +135,6 @@ const buscarUsuarioExacto = async (supabase, nombreUsuario, usuarioId) => {
     console.error('❌ Error en buscarUsuarioExacto:', error);
     return null;
   }
-};
-
-const authenticateToken = (req, res, next) => {
-  // Esta función ya existe en server.js, pero puedes definirla aquí también
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ 
-      success: false, 
-      error: 'Token de autenticación requerido' 
-    });
-  }
-
-  const jwt = require('jsonwebtoken');
-  const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Token inválido o expirado' 
-      });
-    }
-    
-    req.user = user;
-    next();
-  });
 };
 
 // 👇 FUNCIÓN PARA CALCULAR DURACIÓN
@@ -260,350 +263,65 @@ const enviarEmailConfirmacion = async (datosEmail) => {
 };
 
 // ============================================
-// 🎯 RUTAS REORDENADAS - ESPECÍFICAS PRIMERO
+// 🎯 RUTAS REORDENADAS CON NUEVOS MIDDLEWARES
 // ============================================
 
-// 👇 RUTA ESPECÍFICA: CANCELAR RESERVA (DEBE IR ANTES QUE LA GENERAL)
-router.put('/:id/cancelar', async (req, res) => {
+// 👇 RUTAS PÚBLICAS (sin autenticación)
+// Obtener disponibilidad
+router.get('/disponibilidad', async (req, res) => {
   const supabase = req.app.get('supabase');
-  const { id } = req.params;
+  const { fecha, polideportivo } = req.query;
 
-  console.log('❌ Cancelando reserva ID:', id);
+  console.log('📅 Consultando disponibilidad - Fecha:', fecha, 'Polideportivo:', polideportivo);
+
+  if (!fecha || !polideportivo) {
+    return res.status(400).json({ success: false, error: 'Fecha y polideportivo son requeridos' });
+  }
+
+  const fechaFormateada = formatearFecha(fecha);
+  if (!fechaFormateada) {
+    return res.status(400).json({ success: false, error: 'Fecha inválida' });
+  }
+
+  console.log('📅 Fecha formateada para consulta:', fechaFormateada);
 
   try {
-    const { error: updateError } = await supabase
-      .from('reservas')
-      .update({ estado: 'cancelada' })
-      .eq('id', id)
-      .eq('estado', 'pendiente');
-
-    if (updateError) {
-      console.error('❌ Error al cancelar reserva:', updateError);
-      return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
-    }
-
-    const { data: reserva, error: selectError } = await supabase
+    const { data: reservas, error } = await supabase
       .from('reservas')
       .select(`
         *,
         pistas!inner(nombre, tipo),
         polideportivos!inner(nombre)
       `)
-      .eq('id', id)
-      .single();
+      .eq('fecha', fechaFormateada)
+      .eq('polideportivo_id', polideportivo)
+      .neq('estado', 'cancelada')
+      .order('hora_inicio');
 
-    if (selectError || !reserva) {
-      console.error('❌ Error al obtener reserva actualizada:', selectError);
-      return res.status(500).json({ success: false, error: 'Error al obtener reserva actualizada' });
+    if (error) {
+      console.error('❌ Error al obtener disponibilidad:', error);
+      return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
     }
     
-    console.log('✅ Reserva cancelada correctamente ID:', id);
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas activas para la fecha`);
     
-    const reservaConLudoteca = {
+    const reservasFormateadas = (reservas || []).map(reserva => ({
       ...reserva,
-      ludoteca: false,
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
       polideportivo_nombre: reserva.polideportivos?.nombre
-    };
+    }));
 
-    res.json({ 
-      success: true, 
-      data: reservaConLudoteca, 
-      message: 'Reserva cancelada correctamente' 
-    });
+    res.json({ success: true, data: reservasFormateadas });
   } catch (error) {
-    console.error('❌ Error al cancelar reserva:', error);
-    return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
+    console.error('❌ Error al obtener disponibilidad:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
   }
 });
 
-// 👇 RUTA ESPECÍFICA: CONFIRMAR RESERVA (DEBE IR ANTES QUE LA GENERAL)
-router.put('/:id/confirmar', async (req, res) => {
-  const supabase = req.app.get('supabase');
-  const { id } = req.params;
-
-  console.log('✅ Confirmando reserva ID:', id);
-
-  if (!id || isNaN(parseInt(id))) {
-    return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
-  }
-
-  const reservaId = parseInt(id);
-
-  try {
-    // 1. Obtener los datos COMPLETOS de la reserva
-    const { data: reserva, error: queryError } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        polideportivos!inner(nombre),
-        pistas!inner(nombre)
-      `)
-      .eq('id', reservaId)
-      .single();
-
-    if (queryError || !reserva) {
-      console.error('❌ Error obteniendo datos de reserva:', queryError);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Reserva no encontrada' 
-      });
-    }
-
-    const reservaCompleta = reserva;
-
-    console.log('👤 Datos obtenidos para el email:');
-    console.log('   Reserva ID:', reservaCompleta.id);
-    console.log('   Usuario ID en reserva:', reservaCompleta.usuario_id);
-    console.log('   Nombre Usuario:', reservaCompleta.nombre_usuario);
-    console.log('   Email guardado en reserva:', reservaCompleta.email_usuario);
-    console.log('   Polideportivo:', reservaCompleta.polideportivos?.nombre);
-    console.log('   Pista:', reservaCompleta.pistas?.nombre);
-    console.log('   Fecha:', reservaCompleta.fecha);
-    console.log('   Horario:', reservaCompleta.hora_inicio, '-', reservaCompleta.hora_fin);
-    console.log('   Precio:', reservaCompleta.precio);
-
-    if (reservaCompleta.estado !== 'pendiente') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'La reserva ya ha sido confirmada o cancelada' 
-      });
-    }
-
-    let emailParaEnviar = '';
-    let nombreParaEmail = reservaCompleta.nombre_usuario;
-    
-    if (reservaCompleta.email_usuario) {
-      emailParaEnviar = reservaCompleta.email_usuario;
-      console.log('📧 Usando email guardado en reserva:', emailParaEnviar);
-    }
-    else if (reservaCompleta.usuario_id && reservaCompleta.usuario_id !== 0) {
-      console.log('🔍 Buscando usuario por ID:', reservaCompleta.usuario_id);
-      const { data: usuario, error: usuarioError } = await supabase
-        .from('usuarios')
-        .select('id, correo, nombre, usuario')
-        .eq('id', reservaCompleta.usuario_id)
-        .single();
-      
-      if (!usuarioError && usuario && usuario.correo) {
-        emailParaEnviar = usuario.correo;
-        nombreParaEmail = usuario.nombre || usuario.usuario || reservaCompleta.nombre_usuario;
-        console.log('📧 Email obtenido por usuario_id:', emailParaEnviar);
-      } else {
-        console.log('⚠️  Usuario no encontrado o sin email');
-      }
-    }
-
-    const { error: updateError } = await supabase
-      .from('reservas')
-      .update({ 
-        estado: 'confirmada',
-        fecha_confirmacion: new Date().toISOString()
-      })
-      .eq('id', reservaId);
-
-    if (updateError) {
-      console.error('❌ Error actualizando reserva:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
-      });
-    }
-
-    console.log('✅ Estado de reserva actualizado a: confirmada');
-
-    let emailEnviado = false;
-    let mensajeEmail = '';
-    
-    if (emailParaEnviar) {
-      const duracion = calcularDuracion(reservaCompleta.hora_inicio, reservaCompleta.hora_fin);
-      
-      const datosEmail = {
-        to_name: nombreParaEmail,
-        to_email: emailParaEnviar,
-        reserva_id: reservaCompleta.id.toString().padStart(6, '0'),
-        polideportivo: reservaCompleta.polideportivos?.nombre || 'Polideportivo',
-        pista: reservaCompleta.pistas?.nombre || 'Pista',
-        fecha: reservaCompleta.fecha,
-        horario: `${reservaCompleta.hora_inicio} - ${reservaCompleta.hora_fin}`,
-        duracion: duracion,
-        precio: `€${parseFloat(reservaCompleta.precio).toFixed(2)}`,
-        email_contacto: 'info@polideportivo.com',
-        telefono_contacto: '+34 912 345 678',
-        horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
-        anio_actual: new Date().getFullYear().toString()
-      };
-
-      console.log('📤 Enviando email con datos:', datosEmail);
-
-      try {
-        await enviarEmailConfirmacion(datosEmail);
-        emailEnviado = true;
-        mensajeEmail = 'Email de confirmación enviado correctamente';
-        console.log('✅ Email enviado exitosamente');
-        
-      } catch (emailError) {
-        console.error('⚠️  Error enviando email:', emailError);
-        mensajeEmail = 'Reserva confirmada, pero error enviando email';
-      }
-      
-    } else {
-      console.log('⚠️  No se pudo obtener email para enviar');
-      mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
-    }
-
-    const { data: reservaActualizada } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        polideportivos!inner(nombre),
-        pistas!inner(nombre)
-      `)
-      .eq('id', reservaId)
-      .single();
-
-    const reservaConLudoteca = {
-      ...reservaActualizada,
-      ludoteca: false,
-      pistaNombre: reservaActualizada.pistas?.nombre,
-      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
-    };
-
-    if (emailEnviado) {
-      res.json({
-        success: true,
-        message: '✅ Reserva confirmada y email de confirmación enviado correctamente',
-        data: reservaConLudoteca
-      });
-    } else {
-      res.json({
-        success: true,
-        message: '✅ Reserva confirmada correctamente',
-        data: reservaConLudoteca,
-        warning: mensajeEmail
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Error en confirmar reserva:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// 👇 RUTA ESPECÍFICA: REENVIAR EMAIL
-router.post('/:id/reenviar-email', async (req, res) => {
-  const supabase = req.app.get('supabase');
-  const { id } = req.params;
-
-  console.log(`📧 Reenviando email para reserva ID: ${id}`);
-
-  try {
-    const { data: reserva, error: queryError } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        polideportivos!inner(nombre),
-        pistas!inner(nombre)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (queryError || !reserva) {
-      console.error('❌ Error obteniendo datos de reserva:', queryError);
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Reserva no encontrada' 
-      });
-    }
-
-    if (reserva.estado !== 'confirmada') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Solo se pueden reenviar emails de reservas confirmadas' 
-      });
-    }
-
-    let emailParaEnviar = '';
-    
-    if (reserva.email_usuario) {
-      emailParaEnviar = reserva.email_usuario;
-    }
-    else if (reserva.usuario_id && reserva.usuario_id !== 0) {
-      const { data: usuario, error: usuarioError } = await supabase
-        .from('usuarios')
-        .select('id, correo, nombre, usuario')
-        .eq('id', reserva.usuario_id)
-        .single();
-      
-      if (!usuarioError && usuario && usuario.correo) {
-        emailParaEnviar = usuario.correo;
-      }
-    }
-
-    if (!emailParaEnviar) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No se puede reenviar el email - usuario no tiene email registrado' 
-      });
-    }
-
-    const duracion = calcularDuracion(reserva.hora_inicio, reserva.hora_fin);
-    
-    const datosEmail = {
-      to_name: reserva.nombre_usuario,
-      to_email: emailParaEnviar,
-      reserva_id: reserva.id.toString().padStart(6, '0'),
-      polideportivo: reserva.polideportivos?.nombre || 'Polideportivo',
-      pista: reserva.pistas?.nombre || 'Pista',
-      fecha: reserva.fecha,
-      horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
-      duracion: duracion,
-      precio: `€${parseFloat(reserva.precio).toFixed(2)}`,
-      email_contacto: 'info@polideportivo.com',
-      telefono_contacto: '+34 912 345 678',
-      horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
-      anio_actual: new Date().getFullYear().toString()
-    };
-
-    console.log('📧 Reenviando email a:', emailParaEnviar);
-
-    try {
-      await enviarEmailConfirmacion(datosEmail);
-
-      console.log('✅ Email reenviado exitosamente a:', emailParaEnviar);
-
-      res.json({
-        success: true,
-        message: 'Email de confirmación reenviado exitosamente'
-      });
-
-    } catch (emailError) {
-      console.error('❌ Error reenviando email:', emailError);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Error reenviando el email' 
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Error en reenviar-email:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// ============================================
-// RUTAS GENERALES (DEBEN IR DESPUÉS DE LAS ESPECÍFICAS)
-// ============================================
-
+// 👇 RUTAS CON AUTENTICACIÓN BÁSICA
 // Crear una reserva
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const {
     dni_usuario,
@@ -861,12 +579,13 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Listar todas las reservas o por nombre de usuario
-router.get('/', async (req, res) => {
+// 👇 RUTAS PARA USUARIOS Y ADMIN_POLI
+// Obtener reserva por ID
+router.get('/:id', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
-  const { nombre_usuario, usuario_id } = req.query;
+  const { id } = req.params;
 
-  console.log('📋 Obteniendo reservas para:', { nombre_usuario, usuario_id });
+  console.log('🔍 Obteniendo reserva con ID:', id, 'para usuario:', req.user?.id);
 
   try {
     let query = supabase
@@ -876,108 +595,28 @@ router.get('/', async (req, res) => {
         pistas!inner(nombre, tipo),
         polideportivos!inner(nombre)
       `)
-      .order('fecha', { ascending: false })
-      .order('hora_inicio', { ascending: false });
+      .eq('id', id);
 
-    if (usuario_id && usuario_id !== '0') {
-      query = query.eq('usuario_id', usuario_id);
-    } else if (nombre_usuario) {
-      query = query.eq('nombre_usuario', nombre_usuario);
+    // Si es admin_poli, verificar que la reserva pertenezca a su polideportivo
+    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+      // Obtener el polideportivo_id del admin
+      const { data: adminData, error: adminError } = await supabase
+        .from('usuarios')
+        .select('polideportivo_id')
+        .eq('id', req.user.id)
+        .single();
+      
+      if (!adminError && adminData?.polideportivo_id) {
+        query = query.eq('polideportivo_id', adminData.polideportivo_id);
+      }
     }
-
-    const { data: reservas, error } = await query;
-
-    if (error) {
-      console.error('❌ Error al obtener reservas:', error);
-      return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+    // Si es usuario normal, solo puede ver sus propias reservas
+    else if (req.user?.rol === ROLES.USUARIO) {
+      query = query.eq('usuario_id', req.user.id);
     }
-    
-    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
-    
-    const reservasConLudoteca = (reservas || []).map(reserva => ({
-      ...reserva,
-      ludoteca: false,
-      pistaNombre: reserva.pistas?.nombre,
-      pistaTipo: reserva.pistas?.tipo,
-      polideportivo_nombre: reserva.polideportivos?.nombre
-    }));
+    // Super_admin puede ver todo (no aplica filtro)
 
-    res.json({ success: true, data: reservasConLudoteca });
-  } catch (error) {
-    console.error('❌ Error al obtener reservas:', error);
-    return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
-  }
-});
-
-// Obtener disponibilidad
-router.get('/disponibilidad', async (req, res) => {
-  const supabase = req.app.get('supabase');
-  const { fecha, polideportivo } = req.query;
-
-  console.log('📅 Consultando disponibilidad - Fecha:', fecha, 'Polideportivo:', polideportivo);
-
-  if (!fecha || !polideportivo) {
-    return res.status(400).json({ success: false, error: 'Fecha y polideportivo son requeridos' });
-  }
-
-  const fechaFormateada = formatearFecha(fecha);
-  if (!fechaFormateada) {
-    return res.status(400).json({ success: false, error: 'Fecha inválida' });
-  }
-
-  console.log('📅 Fecha formateada para consulta:', fechaFormateada);
-
-  try {
-    const { data: reservas, error } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        pistas!inner(nombre, tipo),
-        polideportivos!inner(nombre)
-      `)
-      .eq('fecha', fechaFormateada)
-      .eq('polideportivo_id', polideportivo)
-      .neq('estado', 'cancelada')
-      .order('hora_inicio');
-
-    if (error) {
-      console.error('❌ Error al obtener disponibilidad:', error);
-      return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
-    }
-    
-    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas activas para la fecha`);
-    
-    const reservasFormateadas = (reservas || []).map(reserva => ({
-      ...reserva,
-      pistaNombre: reserva.pistas?.nombre,
-      pistaTipo: reserva.pistas?.tipo,
-      polideportivo_nombre: reserva.polideportivos?.nombre
-    }));
-
-    res.json({ success: true, data: reservasFormateadas });
-  } catch (error) {
-    console.error('❌ Error al obtener disponibilidad:', error);
-    return res.status(500).json({ success: false, error: 'Error al obtener disponibilidad' });
-  }
-});
-
-// Obtener reserva por ID
-router.get('/:id', async (req, res) => {
-  const supabase = req.app.get('supabase');
-  const { id } = req.params;
-
-  console.log('🔍 Obteniendo reserva con ID:', id);
-
-  try {
-    const { data: reserva, error } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        pistas!inner(nombre, tipo),
-        polideportivos!inner(nombre)
-      `)
-      .eq('id', id)
-      .single();
+    const { data: reserva, error } = await query.single();
 
     if (error) {
       console.error('❌ Error al obtener reserva:', error);
@@ -1006,12 +645,525 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Eliminar una reserva
-router.delete('/:id', async (req, res) => {
+// Obtener mis reservas (para usuario normal)
+router.get('/mis-reservas', authenticateToken, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  
+  console.log('📋 Obteniendo mis reservas para usuario ID:', req.user?.id);
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+
+    // Usuario normal solo ve sus reservas
+    if (req.user?.rol === ROLES.USUARIO) {
+      query = query.eq('usuario_id', req.user.id);
+    }
+    // Admin_poli ve las reservas de su polideportivo
+    else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+      // Obtener el polideportivo_id del admin
+      const { data: adminData, error: adminError } = await supabase
+        .from('usuarios')
+        .select('polideportivo_id')
+        .eq('id', req.user.id)
+        .single();
+      
+      if (!adminError && adminData?.polideportivo_id) {
+        query = query.eq('polideportivo_id', adminData.polideportivo_id);
+      } else {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'Admin de polideportivo no tiene polideportivo asignado' 
+        });
+      }
+    }
+    // Super_admin puede ver todo (no aplica filtro)
+
+    const { data: reservas, error } = await query;
+
+    if (error) {
+      console.error('❌ Error al obtener reservas:', error);
+      return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+    }
+    
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
+    
+    const reservasConLudoteca = (reservas || []).map(reserva => ({
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    }));
+
+    res.json({ success: true, data: reservasConLudoteca });
+  } catch (error) {
+    console.error('❌ Error al obtener reservas:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+  }
+});
+
+// 👇 RUTAS PARA ADMIN_POLI Y SUPER_ADMIN
+// Listar todas las reservas (con filtrado por polideportivo para admin_poli)
+router.get('/', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { nombre_usuario, usuario_id, fecha, estado, polideportivo_id } = req.query;
+
+  console.log('📋 Obteniendo reservas (admin view) para:', { 
+    rol: req.user?.rol, 
+    nombre_usuario, 
+    usuario_id,
+    polideportivo_id: req.user?.polideportivo_id 
+  });
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre),
+        usuarios!inner(usuario, correo, telefono)
+      `)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+
+    // Aplicar filtro por polideportivo para admin_poli
+    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
+      query = query.eq('polideportivo_id', req.user.polideportivo_id);
+    }
+    // Super_admin puede filtrar por polideportivo si lo especifica
+    else if (req.user?.rol === ROLES.SUPER_ADMIN && polideportivo_id) {
+      query = query.eq('polideportivo_id', polideportivo_id);
+    }
+
+    // Filtros adicionales
+    if (usuario_id && usuario_id !== '0') {
+      query = query.eq('usuario_id', usuario_id);
+    } else if (nombre_usuario) {
+      query = query.ilike('nombre_usuario', `%${nombre_usuario}%`);
+    }
+
+    if (fecha) {
+      const fechaFormateada = formatearFecha(fecha);
+      if (fechaFormateada) {
+        query = query.eq('fecha', fechaFormateada);
+      }
+    }
+
+    if (estado) {
+      query = query.eq('estado', estado);
+    }
+
+    const { data: reservas, error } = await query;
+
+    if (error) {
+      console.error('❌ Error al obtener reservas:', error);
+      return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+    }
+    
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
+    
+    const reservasConLudoteca = (reservas || []).map(reserva => ({
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre,
+      usuario_login: reserva.usuarios?.usuario,
+      usuario_email: reserva.usuarios?.correo,
+      usuario_telefono: reserva.usuarios?.telefono
+    }));
+
+    res.json({ success: true, data: reservasConLudoteca });
+  } catch (error) {
+    console.error('❌ Error al obtener reservas:', error);
+    return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+  }
+});
+
+// 👇 RUTAS ESPECÍFICAS PARA ADMINISTRADORES
+// RUTA ESPECÍFICA: CONFIRMAR RESERVA (admin_poli o superior)
+router.put('/:id/confirmar', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
 
-  console.log('🗑️ Eliminando reserva ID:', id);
+  console.log('✅ Confirmando reserva ID:', id, 'por admin:', req.user?.id);
+
+  if (!id || isNaN(parseInt(id))) {
+    return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
+  }
+
+  const reservaId = parseInt(id);
+
+  try {
+    // 1. Obtener los datos COMPLETOS de la reserva
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', reservaId);
+
+    // Verificar que admin_poli solo confirme reservas de su polideportivo
+    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
+      query = query.eq('polideportivo_id', req.user.polideportivo_id);
+    }
+
+    const { data: reserva, error: queryError } = await query.single();
+
+    if (queryError || !reserva) {
+      console.error('❌ Error obteniendo datos de reserva:', queryError);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos para confirmarla' 
+      });
+    }
+
+    const reservaCompleta = reserva;
+
+    console.log('👤 Datos obtenidos para el email:');
+    console.log('   Reserva ID:', reservaCompleta.id);
+    console.log('   Polideportivo:', reservaCompleta.polideportivos?.nombre);
+    console.log('   Pista:', reservaCompleta.pistas?.nombre);
+
+    if (reservaCompleta.estado !== 'pendiente') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La reserva ya ha sido confirmada o cancelada' 
+      });
+    }
+
+    let emailParaEnviar = '';
+    let nombreParaEmail = reservaCompleta.nombre_usuario;
+    
+    if (reservaCompleta.email_usuario) {
+      emailParaEnviar = reservaCompleta.email_usuario;
+      console.log('📧 Usando email guardado en reserva:', emailParaEnviar);
+    }
+    else if (reservaCompleta.usuario_id && reservaCompleta.usuario_id !== 0) {
+      console.log('🔍 Buscando usuario por ID:', reservaCompleta.usuario_id);
+      const { data: usuario, error: usuarioError } = await supabase
+        .from('usuarios')
+        .select('id, correo, nombre, usuario')
+        .eq('id', reservaCompleta.usuario_id)
+        .single();
+      
+      if (!usuarioError && usuario && usuario.correo) {
+        emailParaEnviar = usuario.correo;
+        nombreParaEmail = usuario.nombre || usuario.usuario || reservaCompleta.nombre_usuario;
+        console.log('📧 Email obtenido por usuario_id:', emailParaEnviar);
+      } else {
+        console.log('⚠️  Usuario no encontrado o sin email');
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ 
+        estado: 'confirmada',
+        fecha_confirmacion: new Date().toISOString()
+      })
+      .eq('id', reservaId);
+
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    console.log('✅ Estado de reserva actualizado a: confirmada');
+
+    let emailEnviado = false;
+    let mensajeEmail = '';
+    
+    if (emailParaEnviar) {
+      const duracion = calcularDuracion(reservaCompleta.hora_inicio, reservaCompleta.hora_fin);
+      
+      const datosEmail = {
+        to_name: nombreParaEmail,
+        to_email: emailParaEnviar,
+        reserva_id: reservaCompleta.id.toString().padStart(6, '0'),
+        polideportivo: reservaCompleta.polideportivos?.nombre || 'Polideportivo',
+        pista: reservaCompleta.pistas?.nombre || 'Pista',
+        fecha: reservaCompleta.fecha,
+        horario: `${reservaCompleta.hora_inicio} - ${reservaCompleta.hora_fin}`,
+        duracion: duracion,
+        precio: `€${parseFloat(reservaCompleta.precio).toFixed(2)}`,
+        email_contacto: 'info@polideportivo.com',
+        telefono_contacto: '+34 912 345 678',
+        horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
+        anio_actual: new Date().getFullYear().toString()
+      };
+
+      console.log('📤 Enviando email con datos:', datosEmail);
+
+      try {
+        await enviarEmailConfirmacion(datosEmail);
+        emailEnviado = true;
+        mensajeEmail = 'Email de confirmación enviado correctamente';
+        console.log('✅ Email enviado exitosamente');
+        
+      } catch (emailError) {
+        console.error('⚠️  Error enviando email:', emailError);
+        mensajeEmail = 'Reserva confirmada, pero error enviando email';
+      }
+      
+    } else {
+      console.log('⚠️  No se pudo obtener email para enviar');
+      mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
+    }
+
+    const { data: reservaActualizada } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', reservaId)
+      .single();
+
+    const reservaConLudoteca = {
+      ...reservaActualizada,
+      ludoteca: false,
+      pistaNombre: reservaActualizada.pistas?.nombre,
+      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
+    };
+
+    if (emailEnviado) {
+      res.json({
+        success: true,
+        message: '✅ Reserva confirmada y email de confirmación enviado correctamente',
+        data: reservaConLudoteca
+      });
+    } else {
+      res.json({
+        success: true,
+        message: '✅ Reserva confirmada correctamente',
+        data: reservaConLudoteca,
+        warning: mensajeEmail
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error en confirmar reserva:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// RUTA ESPECÍFICA: CANCELAR RESERVA (usuario, admin_poli o superior)
+router.put('/:id/cancelar', authenticateToken, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { id } = req.params;
+
+  console.log('❌ Cancelando reserva ID:', id, 'por usuario:', req.user?.id);
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id);
+
+    // Verificar permisos
+    if (req.user?.rol === ROLES.USUARIO) {
+      query = query.eq('usuario_id', req.user.id);
+    } 
+    else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+      // Obtener el polideportivo_id del admin
+      const { data: adminData, error: adminError } = await supabase
+        .from('usuarios')
+        .select('polideportivo_id')
+        .eq('id', req.user.id)
+        .single();
+      
+      if (!adminError && adminData?.polideportivo_id) {
+        query = query.eq('polideportivo_id', adminData.polideportivo_id);
+      } else {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'No tienes permisos para cancelar esta reserva' 
+        });
+      }
+    }
+    // Super_admin puede cancelar cualquier reserva (no aplica filtro)
+
+    const { data: reserva, error: selectError } = await query.single();
+
+    if (selectError || !reserva) {
+      console.log('❌ Reserva no encontrada o sin permisos ID:', id);
+      return res.status(404).json({ success: false, error: 'Reserva no encontrada o no tienes permisos para cancelarla' });
+    }
+
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ estado: 'cancelada' })
+      .eq('id', id)
+      .eq('estado', 'pendiente');
+
+    if (updateError) {
+      console.error('❌ Error al cancelar reserva:', updateError);
+      return res.status(500).json({ success: false, error: 'Error al cancelar reserva' });
+    }
+
+    console.log('✅ Reserva cancelada correctamente ID:', id);
+    
+    const reservaConLudoteca = {
+      ...reserva,
+      ludoteca: false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    };
+
+    res.json({ 
+      success: true, 
+      data: reservaConLudoteca, 
+      message: 'Reserva cancelada correctamente' 
+    });
+  } catch (error) {
+    console.error('❌ Error al cancelar reserva:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error al cancelar reserva' 
+    });
+  }
+});
+
+// RUTA ESPECÍFICA: REENVIAR EMAIL (admin_poli o superior)
+router.post('/:id/reenviar-email', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), filtrarPorPolideportivo, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { id } = req.params;
+
+  console.log(`📧 Reenviando email para reserva ID: ${id}`);
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        polideportivos!inner(nombre),
+        pistas!inner(nombre)
+      `)
+      .eq('id', id);
+
+    // Verificar que admin_poli solo reenvíe emails de su polideportivo
+    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
+      query = query.eq('polideportivo_id', req.user.polideportivo_id);
+    }
+
+    const { data: reserva, error: queryError } = await query.single();
+
+    if (queryError || !reserva) {
+      console.error('❌ Error obteniendo datos de reserva:', queryError);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos' 
+      });
+    }
+
+    if (reserva.estado !== 'confirmada') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Solo se pueden reenviar emails de reservas confirmadas' 
+      });
+    }
+
+    let emailParaEnviar = '';
+    
+    if (reserva.email_usuario) {
+      emailParaEnviar = reserva.email_usuario;
+    }
+    else if (reserva.usuario_id && reserva.usuario_id !== 0) {
+      const { data: usuario, error: usuarioError } = await supabase
+        .from('usuarios')
+        .select('id, correo, nombre, usuario')
+        .eq('id', reserva.usuario_id)
+        .single();
+      
+      if (!usuarioError && usuario && usuario.correo) {
+        emailParaEnviar = usuario.correo;
+      }
+    }
+
+    if (!emailParaEnviar) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No se puede reenviar el email - usuario no tiene email registrado' 
+      });
+    }
+
+    const duracion = calcularDuracion(reserva.hora_inicio, reserva.hora_fin);
+    
+    const datosEmail = {
+      to_name: reserva.nombre_usuario,
+      to_email: emailParaEnviar,
+      reserva_id: reserva.id.toString().padStart(6, '0'),
+      polideportivo: reserva.polideportivos?.nombre || 'Polideportivo',
+      pista: reserva.pistas?.nombre || 'Pista',
+      fecha: reserva.fecha,
+      horario: `${reserva.hora_inicio} - ${reserva.hora_fin}`,
+      duracion: duracion,
+      precio: `€${parseFloat(reserva.precio).toFixed(2)}`,
+      email_contacto: 'info@polideportivo.com',
+      telefono_contacto: '+34 912 345 678',
+      horario_contacto: 'L-V: 8:00-22:00, S-D: 9:00-20:00',
+      anio_actual: new Date().getFullYear().toString()
+    };
+
+    console.log('📧 Reenviando email a:', emailParaEnviar);
+
+    try {
+      await enviarEmailConfirmacion(datosEmail);
+
+      console.log('✅ Email reenviado exitosamente a:', emailParaEnviar);
+
+      res.json({
+        success: true,
+        message: 'Email de confirmación reenviado exitosamente'
+      });
+
+    } catch (emailError) {
+      console.error('❌ Error reenviando email:', emailError);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error reenviando el email' 
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error en reenviar-email:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Eliminar una reserva (solo super_admin)
+router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { id } = req.params;
+
+  console.log('🗑️ Eliminando reserva ID:', id, 'por super_admin:', req.user?.id);
 
   try {
     const { data: reserva, error: selectError } = await supabase
@@ -1059,8 +1211,8 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// 👇 RUTA GENERAL PARA ACTUALIZAR RESERVA (DEBE IR ÚLTIMA DE LAS RUTAS PUT)
-router.put('/:id', async (req, res) => {
+// 👇 RUTA GENERAL PARA ACTUALIZAR RESERVA (solo super_admin)
+router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
   const {
@@ -1073,7 +1225,7 @@ router.put('/:id', async (req, res) => {
     ludoteca = false
   } = req.body;
 
-  console.log('📥 Actualizando reserva ID:', id);
+  console.log('📥 Actualizando reserva ID:', id, 'por super_admin:', req.user?.id);
   console.log('Datos recibidos:', {
     pista_id, fecha, hora_inicio, hora_fin, estado, precio, ludoteca
   });
