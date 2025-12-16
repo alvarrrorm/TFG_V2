@@ -3,14 +3,13 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
+// Ruta de login
 router.post('/', async (req, res) => {
   const supabase = req.app.get('supabase');
   const { usuario, pass } = req.body;
 
-  // DEBUG: Ver qué llega
   console.log('🔐 Login attempt:', usuario);
 
-  // Validación de campos
   if (!usuario || !pass) {
     return res.status(400).json({
       success: false,
@@ -19,7 +18,7 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Buscar el usuario en Supabase
+    // Buscar el usuario
     const { data: usuarios, error } = await supabase
       .from('usuarios')
       .select('*')
@@ -43,15 +42,29 @@ router.post('/', async (req, res) => {
 
     const usuarioEncontrado = usuarios[0];
 
-    // DEBUG: Ver qué encontró
-    console.log('✅ Usuario encontrado:', {
+    // DEBUG IMPORTANTE
+    console.log('✅ Usuario encontrado en DB:', {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol,
-      polideportivo_id: usuarioEncontrado.polideportivo_id
+      rol: usuarioEncontrado.rol || 'NO TIENE ROL EN DB',
+      polideportivo_id: usuarioEncontrado.polideportivo_id || 'NO TIENE POLI_ID EN DB',
+      tieneRol: !!usuarioEncontrado.rol,
+      tienePolideportivo: !!usuarioEncontrado.polideportivo_id
     });
 
-    // Comparar la contraseña
+    // Verificar si la columna 'rol' existe y tiene valor
+    if (!usuarioEncontrado.rol) {
+      console.error('❌ CRÍTICO: Usuario no tiene rol en la base de datos');
+      // Asignar rol por defecto
+      usuarioEncontrado.rol = 'usuario';
+    }
+
+    // Verificar si es admin_poli pero no tiene polideportivo
+    if (usuarioEncontrado.rol === 'admin_poli' && !usuarioEncontrado.polideportivo_id) {
+      console.warn('⚠️ ADVERTENCIA: admin_poli sin polideportivo asignado');
+    }
+
+    // Comparar contraseña
     const coincide = await bcrypt.compare(pass, usuarioEncontrado.pass);
 
     if (!coincide) {
@@ -61,16 +74,16 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Datos para el token JWT
+    // Datos para el token JWT - Asegurar todos los campos
     const payload = {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol,
+      rol: usuarioEncontrado.rol || 'usuario', // Asegurar que siempre tenga rol
       nombre: usuarioEncontrado.nombre,
       correo: usuarioEncontrado.correo,
       dni: usuarioEncontrado.dni,
       telefono: usuarioEncontrado.telefono,
-      polideportivo_id: usuarioEncontrado.polideportivo_id
+      polideportivo_id: usuarioEncontrado.polideportivo_id || null
     };
 
     // DEBUG: Ver payload del token
@@ -82,7 +95,7 @@ router.post('/', async (req, res) => {
       expiresIn: '24h'
     });
 
-    // Respuesta exitosa - INCLUYE TODOS LOS DATOS IMPORTANTES
+    // Respuesta exitosa - CON DATOS COMPLETOS Y VERIFICADOS
     const responseData = {
       success: true,
       message: 'Inicio de sesión exitoso',
@@ -93,18 +106,21 @@ router.post('/', async (req, res) => {
         usuario: usuarioEncontrado.usuario,
         dni: usuarioEncontrado.dni,
         correo: usuarioEncontrado.correo,
-        rol: usuarioEncontrado.rol,
+        rol: usuarioEncontrado.rol || 'usuario', // ← AQUÍ ES CLAVE
         telefono: usuarioEncontrado.telefono,
-        polideportivo_id: usuarioEncontrado.polideportivo_id
+        polideportivo_id: usuarioEncontrado.polideportivo_id || null,
+        fecha_creacion: usuarioEncontrado.fecha_creacion
       },
-      expiresIn: 24 * 60 * 60 // 24 horas en segundos
+      expiresIn: 24 * 60 * 60
     };
 
     // DEBUG: Ver respuesta final
-    console.log('✅ Login exitoso - Datos enviados:', {
+    console.log('✅ Login exitoso - Datos enviados al frontend:', {
       usuario: responseData.user.usuario,
       rol: responseData.user.rol,
-      polideportivo_id: responseData.user.polideportivo_id
+      polideportivo_id: responseData.user.polideportivo_id,
+      tieneRol: !!responseData.user.rol,
+      tienePolideportivo: !!responseData.user.polideportivo_id
     });
 
     return res.status(200).json(responseData);
@@ -116,6 +132,15 @@ router.post('/', async (req, res) => {
       error: 'Error interno del servidor'
     });
   }
+});
+
+// Ruta de salud para verificar
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Sistema de login funcionando',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;
