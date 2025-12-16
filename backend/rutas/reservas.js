@@ -710,6 +710,114 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
   }
 });
 
+// 👇 RUTA ESPECÍFICA PARA ADMIN_POLI (NUEVA)
+router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  
+  console.log('📋 Obteniendo reservas para admin_poli - Usuario:', req.user?.id, 'Rol:', req.user?.rol);
+
+  // Verificar que es admin_poli
+  if (req.user?.rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+    return res.status(403).json({ 
+      success: false, 
+      error: 'Acceso denegado. Se requieren permisos de admin_poli' 
+    });
+  }
+
+  // Verificar que tiene polideportivo asignado
+  if (!req.user?.polideportivo_id) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'No tienes un polideportivo asignado' 
+    });
+  }
+
+  const { nombre_usuario, usuario_id, fecha, estado } = req.query;
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('polideportivo_id', req.user.polideportivo_id)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+
+    // Filtros adicionales
+    if (usuario_id && usuario_id !== '0') {
+      query = query.eq('usuario_id', usuario_id);
+    } else if (nombre_usuario) {
+      query = query.ilike('nombre_usuario', `%${nombre_usuario}%`);
+    }
+
+    if (fecha) {
+      const fechaFormateada = formatearFecha(fecha);
+      if (fechaFormateada) {
+        query = query.eq('fecha', fechaFormateada);
+      }
+    }
+
+    if (estado) {
+      query = query.eq('estado', estado);
+    }
+
+    const { data: reservas, error } = await query;
+
+    if (error) {
+      console.error('❌ Error al obtener reservas:', error);
+      return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
+    }
+    
+    console.log(`📊 Admin_poli: se encontraron ${reservas?.length || 0} reservas`);
+    
+    // Obtener información de usuarios por separado
+    const reservasConInfo = await Promise.all((reservas || []).map(async (reserva) => {
+      let usuarioInfo = {
+        usuario_login: 'N/A',
+        usuario_email: 'N/A',
+        usuario_telefono: 'N/A'
+      };
+      
+      if (reserva.usuario_id && reserva.usuario_id !== 0) {
+        try {
+          const { data: usuario, error: usuarioError } = await supabase
+            .from('usuarios')
+            .select('usuario, correo, telefono')
+            .eq('id', reserva.usuario_id)
+            .single();
+          
+          if (!usuarioError && usuario) {
+            usuarioInfo = {
+              usuario_login: usuario.usuario || 'N/A',
+              usuario_email: usuario.correo || 'N/A',
+              usuario_telefono: usuario.telefono || 'N/A'
+            };
+          }
+        } catch (usuarioErr) {
+          console.warn('⚠️  No se pudo obtener info del usuario ID:', reserva.usuario_id, usuarioErr);
+        }
+      }
+      
+      return {
+        ...reserva,
+        ludoteca: false,
+        pistaNombre: reserva.pistas?.nombre,
+        pistaTipo: reserva.pistas?.tipo,
+        polideportivo_nombre: reserva.polideportivos?.nombre,
+        ...usuarioInfo
+      };
+    }));
+
+    res.json({ success: true, data: reservasConInfo });
+  } catch (error) {
+    console.error('❌ Error al obtener reservas admin_poli:', error);
+    return res.status(500).json({ success: false, error: 'Error interno del servidor' });
+  }
+});
+
 // 👇 RUTA PRINCIPAL PARA OBTENER RESERVAS - CORREGIDA
 // Listar todas las reservas (con filtrado por polideportivo para admin_poli)
 router.get('/', authenticateToken, async (req, res) => {
