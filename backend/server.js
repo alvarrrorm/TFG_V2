@@ -116,6 +116,8 @@ const clearCookie = (res, name) => {
 
 // ========== MIDDLEWARE DE AUTENTICACIÓN ==========
 const authenticateToken = (req, res, next) => {
+  console.log('🔐 Middleware authenticateToken ejecutándose');
+  
   // 1. Intentar obtener token de Authorization header
   const authHeader = req.headers['authorization'];
   const tokenFromHeader = authHeader && authHeader.split(' ')[1];
@@ -130,7 +132,10 @@ const authenticateToken = (req, res, next) => {
   // Prioridad: Header > Cookie > Query
   const token = tokenFromHeader || tokenFromCookie || tokenFromQuery;
 
+  console.log('📌 Token obtenido:', token ? 'Sí (longitud: ' + token.length + ')' : 'No');
+
   if (!token) {
+    console.log('❌ Token de autenticación requerido');
     return res.status(401).json({ 
       success: false, 
       error: 'Token de autenticación requerido' 
@@ -139,13 +144,19 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      // Token expirado o inválido
+      console.log('❌ Token inválido o expirado:', err.message);
       return res.status(403).json({ 
         success: false, 
         error: 'Token inválido o expirado',
         code: 'TOKEN_EXPIRED'
       });
     }
+    
+    console.log('✅ Token verificado correctamente. Usuario:', {
+      id: user.id,
+      usuario: user.usuario,
+      rol: user.rol
+    });
     
     req.user = user;
     next();
@@ -399,8 +410,7 @@ app.set('verificarEsSuperAdmin', verificarEsSuperAdmin);
 app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 
 // ========== REGISTRAR ROUTERS PRINCIPALES PRIMERO ==========
-// ¡IMPORTANTE! Los routers generales deben ir ANTES de las rutas específicas
-app.use('/api/reservas', reservasRouter);      // Incluye /api/reservas/mis-reservas
+app.use('/api/reservas', reservasRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/usuarios', usuariosRouter);
@@ -620,6 +630,7 @@ app.post('/api/login', async (req, res) => {
 
 // Verificar autenticación (usado por ProtectedRoute)
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  console.log('✅ Autenticación verificada para usuario:', req.user?.id);
   res.json({
     success: true,
     message: 'Autenticación válida',
