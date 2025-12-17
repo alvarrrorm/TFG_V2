@@ -579,8 +579,9 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTAS PARA USUARIOS Y ADMIN_POLI
-// Obtener reserva por ID
+// 👇 RUTA PARA OBTENER RESERVA POR ID - CORREGIDA
+// Todos los usuarios pueden ver SUS PROPIAS reservas
+// Administradores pueden ver cualquier reserva
 router.get('/:id', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
@@ -597,35 +598,39 @@ router.get('/:id', authenticateToken, async (req, res) => {
       `)
       .eq('id', id);
 
-    // Si es admin_poli, verificar que la reserva pertenezca a su polideportivo
-    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
-      // Obtener el polideportivo_id del admin
-      const { data: adminData, error: adminError } = await supabase
-        .from('usuarios')
-        .select('polideportivo_id')
-        .eq('id', req.user.id)
-        .single();
-      
-      if (!adminError && adminData?.polideportivo_id) {
-        query = query.eq('polideportivo_id', adminData.polideportivo_id);
-      }
-    }
-    // Si es usuario normal, solo puede ver sus propias reservas
-    else if (req.user?.rol === ROLES.USUARIO) {
-      query = query.eq('usuario_id', req.user.id);
-    }
-    // Super_admin puede ver todo (no aplica filtro)
-
     const { data: reserva, error } = await query.single();
 
-    if (error) {
+    if (error || !reserva) {
       console.error('❌ Error al obtener reserva:', error);
-      return res.status(500).json({ success: false, error: 'Error al obtener reserva' });
-    }
-    
-    if (!reserva) {
-      console.log('❌ Reserva no encontrada ID:', id);
       return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
+    }
+
+    // Verificar permisos para ver esta reserva
+    // 1. Si es usuario normal, solo puede ver sus propias reservas
+    // 2. Si es admin_poli, puede ver reservas de su polideportivo
+    // 3. Si es admin o super_admin, puede ver cualquier reserva
+    
+    let tienePermiso = false;
+    
+    if (req.user?.rol === ROLES.USUARIO) {
+      // Usuario normal solo puede ver sus propias reservas
+      tienePermiso = (reserva.usuario_id === req.user.id);
+    } 
+    else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+      // Admin_poli puede ver reservas de su polideportivo
+      tienePermiso = (reserva.polideportivo_id === req.user.polideportivo_id);
+    }
+    else if (req.user?.rol === ROLES.ADMIN || req.user?.rol === ROLES.SUPER_ADMIN) {
+      // Admin y super_admin pueden ver cualquier reserva
+      tienePermiso = true;
+    }
+
+    if (!tienePermiso) {
+      console.log('🚫 Acceso denegado - No tienes permisos para ver esta reserva');
+      return res.status(403).json({ 
+        success: false, 
+        error: 'No tienes permisos para ver esta reserva' 
+      });
     }
 
     console.log('✅ Reserva encontrada:', reserva.id);
@@ -645,13 +650,19 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Obtener mis reservas (para usuario normal)
+// 👇 RUTA MIS RESERVAS - CORREGIDA
+// TODOS los usuarios (usuario, admin_poli, admin, super_admin) ven SOLO SUS PROPIAS reservas
 router.get('/mis-reservas', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   
-  console.log('📋 Obteniendo mis reservas para usuario ID:', req.user?.id);
+  console.log('📋 Obteniendo MIS reservas para usuario:', {
+    id: req.user?.id,
+    rol: req.user?.rol,
+    nombre: req.user?.usuario
+  });
 
   try {
+    // ¡IMPORTANTE! TODOS los usuarios ven SOLO SUS PROPIAS reservas
     let query = supabase
       .from('reservas')
       .select(`
@@ -659,32 +670,9 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
         pistas!inner(nombre, tipo),
         polideportivos!inner(nombre)
       `)
+      .eq('usuario_id', req.user.id) // FILTRO CLAVE: Solo las reservas del usuario actual
       .order('fecha', { ascending: false })
       .order('hora_inicio', { ascending: false });
-
-    // Usuario normal solo ve sus reservas
-    if (req.user?.rol === ROLES.USUARIO) {
-      query = query.eq('usuario_id', req.user.id);
-    }
-    // Admin_poli ve las reservas de su polideportivo
-    else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
-      // Obtener el polideportivo_id del admin
-      const { data: adminData, error: adminError } = await supabase
-        .from('usuarios')
-        .select('polideportivo_id')
-        .eq('id', req.user.id)
-        .single();
-      
-      if (!adminError && adminData?.polideportivo_id) {
-        query = query.eq('polideportivo_id', adminData.polideportivo_id);
-      } else {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Admin de polideportivo no tiene polideportivo asignado' 
-        });
-      }
-    }
-    // Super_admin puede ver todo (no aplica filtro)
 
     const { data: reservas, error } = await query;
 
@@ -693,7 +681,7 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
     }
     
-    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas`);
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas para el usuario ID: ${req.user.id}`);
     
     const reservasConLudoteca = (reservas || []).map(reserva => ({
       ...reserva,
@@ -710,7 +698,7 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTA ESPECÍFICA PARA ADMIN_POLI (NUEVA)
+// 👇 RUTA ESPECÍFICA PARA ADMIN_POLI (NUEVA) - Esta es para que admin_poli vea TODAS las reservas de su polideportivo
 router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   
@@ -771,7 +759,7 @@ router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Error al obtener reservas' });
     }
     
-    console.log(`📊 Admin_poli: se encontraron ${reservas?.length || 0} reservas`);
+    console.log(`📊 Admin_poli: se encontraron ${reservas?.length || 0} reservas en su polideportivo`);
     
     // Obtener información de usuarios por separado
     const reservasConInfo = await Promise.all((reservas || []).map(async (reserva) => {
@@ -818,20 +806,19 @@ router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTA PRINCIPAL PARA OBTENER RESERVAS - CORREGIDA
-// Listar todas las reservas (con filtrado por polideportivo para admin_poli)
+// 👇 RUTA PRINCIPAL PARA OBTENER TODAS LAS RESERVAS (SOLO ADMINISTRADORES)
 router.get('/', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { nombre_usuario, usuario_id, fecha, estado, polideportivo_id } = req.query;
 
-  console.log('📋 Obteniendo reservas (admin view) para:', { 
+  console.log('📋 Obteniendo TODAS las reservas (admin view) para:', { 
     rol: req.user?.rol, 
     nombre_usuario, 
     usuario_id,
     polideportivo_id: req.user?.polideportivo_id 
   });
 
-  // Verificar permisos
+  // Verificar permisos - SOLO ADMINISTRADORES pueden ver todas las reservas
   if (!req.user?.rol || 
       (req.user.rol !== ROLES.SUPER_ADMIN && 
        req.user.rol !== ROLES.ADMIN && 
