@@ -444,7 +444,7 @@ app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminP
 app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { polideportivo_id } = req.user;
-    const { fecha, estado } = req.query;
+    const { fecha, estado, nombre_usuario, usuario_id } = req.query;
     
     console.log('📋 Obteniendo reservas del polideportivo:', polideportivo_id);
     
@@ -453,18 +453,25 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
       .select(`
         *,
         pistas!inner(nombre, tipo),
-        usuarios!inner(nombre, usuario, correo)
+        polideportivos!inner(nombre)
       `)
       .eq('polideportivo_id', polideportivo_id)
       .order('fecha', { ascending: false })
       .order('hora_inicio', { ascending: false });
     
+    // Filtros
     if (fecha) {
       query = query.eq('fecha', fecha);
     }
     
     if (estado) {
       query = query.eq('estado', estado);
+    }
+    
+    if (usuario_id && usuario_id !== '0') {
+      query = query.eq('usuario_id', usuario_id);
+    } else if (nombre_usuario) {
+      query = query.ilike('nombre_usuario', `%${nombre_usuario}%`);
     }
     
     const { data: reservas, error } = await query;
@@ -477,9 +484,47 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
       });
     }
     
+    // Obtener información de usuarios por separado
+    const reservasConInfo = await Promise.all((reservas || []).map(async (reserva) => {
+      let usuarioInfo = {
+        usuario_login: 'N/A',
+        usuario_email: 'N/A',
+        usuario_telefono: 'N/A'
+      };
+      
+      if (reserva.usuario_id && reserva.usuario_id !== 0) {
+        try {
+          const { data: usuario, error: usuarioError } = await supabase
+            .from('usuarios')
+            .select('usuario, correo, telefono')
+            .eq('id', reserva.usuario_id)
+            .single();
+          
+          if (!usuarioError && usuario) {
+            usuarioInfo = {
+              usuario_login: usuario.usuario || 'N/A',
+              usuario_email: usuario.correo || 'N/A',
+              usuario_telefono: usuario.telefono || 'N/A'
+            };
+          }
+        } catch (usuarioErr) {
+          console.warn('⚠️  No se pudo obtener info del usuario ID:', reserva.usuario_id, usuarioErr);
+        }
+      }
+      
+      return {
+        ...reserva,
+        ludoteca: false,
+        pistaNombre: reserva.pistas?.nombre,
+        pistaTipo: reserva.pistas?.tipo,
+        polideportivo_nombre: reserva.polideportivos?.nombre,
+        ...usuarioInfo
+      };
+    }));
+    
     res.json({
       success: true,
-      data: reservas || []
+      data: reservasConInfo || []
     });
     
   } catch (error) {
@@ -532,7 +577,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
       .select(`
         *,
         pistas!inner(nombre),
-        usuarios!inner(nombre, correo)
+        polideportivos!inner(nombre)
       `)
       .single();
     
@@ -548,9 +593,9 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
     try {
       const datosEmail = {
         id: reservaActualizada.id,
-        nombre_usuario: reservaActualizada.usuarios?.nombre || reservaActualizada.nombre_usuario,
-        email: reservaActualizada.usuarios?.correo || reservaActualizada.email_usuario,
-        polideportivo_nombre: 'Polideportivo',
+        nombre_usuario: reservaActualizada.nombre_usuario,
+        email: reservaActualizada.email_usuario,
+        polideportivo_nombre: reservaActualizada.polideportivos?.nombre,
         pista_nombre: reservaActualizada.pistas?.nombre,
         fecha: reservaActualizada.fecha,
         hora_inicio: reservaActualizada.hora_inicio,
@@ -642,6 +687,89 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
     
   } catch (error) {
     console.error('❌ Error cancelando reserva:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para reenviar email de confirmación (admin_poli)
+app.post('/api/admin-poli/reservas/:id/reenviar-email', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    
+    console.log('📧 Reenviando email para reserva ID:', id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
+    const { data: reserva, error: reservaError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (reservaError || !reserva) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos' 
+      });
+    }
+    
+    if (reserva.estado !== 'confirmada') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Solo se pueden reenviar emails de reservas confirmadas' 
+      });
+    }
+    
+    // Obtener email del usuario
+    let emailParaEnviar = '';
+    
+    if (reserva.email_usuario) {
+      emailParaEnviar = reserva.email_usuario;
+    } else if (reserva.usuario_id && reserva.usuario_id !== 0) {
+      const usuario = await obtenerEmailUsuario(reserva.usuario_id);
+      if (usuario && usuario.correo) {
+        emailParaEnviar = usuario.correo;
+      }
+    }
+    
+    if (!emailParaEnviar) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No se puede reenviar el email - usuario no tiene email registrado' 
+      });
+    }
+    
+    // Enviar email
+    const datosEmail = {
+      id: reserva.id,
+      nombre_usuario: reserva.nombre_usuario,
+      email: emailParaEnviar,
+      polideportivo_nombre: reserva.polideportivos?.nombre,
+      pista_nombre: reserva.pistas?.nombre,
+      fecha: reserva.fecha,
+      hora_inicio: reserva.hora_inicio,
+      hora_fin: reserva.hora_fin,
+      precio: reserva.precio,
+      pistas: { nombre: reserva.pistas?.nombre }
+    };
+    
+    await enviarEmailConfirmacionReserva(datosEmail);
+    
+    res.json({
+      success: true,
+      message: 'Email de confirmación reenviado exitosamente'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error reenviando email:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Error interno del servidor' 
