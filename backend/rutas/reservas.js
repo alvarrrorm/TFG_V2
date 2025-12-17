@@ -941,23 +941,12 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // 👇 RUTAS ESPECÍFICAS PARA ADMINISTRADORES
-// RUTA ESPECÍFICA: CONFIRMAR RESERVA (admin_poli o superior)
+// RUTA ESPECÍFICA: CONFIRMAR RESERVA (ahora permitida para usuarios y administradores)
 router.put('/:id/confirmar', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
 
-  console.log('✅ Confirmando reserva ID:', id, 'por admin:', req.user?.id);
-
-  // Verificar permisos
-  if (!req.user?.rol || 
-      (req.user.rol !== ROLES.SUPER_ADMIN && 
-       req.user.rol !== ROLES.ADMIN && 
-       req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO)) {
-    return res.status(403).json({ 
-      success: false, 
-      error: 'Acceso denegado. Se requieren permisos de administrador' 
-    });
-  }
+  console.log('✅ Confirmando reserva ID:', id, 'por usuario:', req.user?.id, 'Rol:', req.user?.rol);
 
   if (!id || isNaN(parseInt(id))) {
     return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
@@ -976,10 +965,23 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       `)
       .eq('id', reservaId);
 
-    // Verificar que admin_poli solo confirme reservas de su polideportivo
-    if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
-      query = query.eq('polideportivo_id', req.user.polideportivo_id);
+    // Permitir acceso según el rol
+    if (req.user?.rol === ROLES.USUARIO) {
+      // Usuario normal solo puede confirmar sus propias reservas
+      query = query.eq('usuario_id', req.user.id);
+    } 
+    else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+      // Admin_poli solo puede confirmar reservas de su polideportivo
+      if (req.user?.polideportivo_id) {
+        query = query.eq('polideportivo_id', req.user.polideportivo_id);
+      } else {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'No tienes un polideportivo asignado' 
+        });
+      }
     }
+    // Super_admin y admin pueden confirmar cualquier reserva (no aplican filtros)
 
     const { data: reserva, error: queryError } = await query.single();
 
@@ -995,9 +997,12 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
 
     console.log('👤 Datos obtenidos para el email:');
     console.log('   Reserva ID:', reservaCompleta.id);
+    console.log('   Usuario ID en reserva:', reservaCompleta.usuario_id);
+    console.log('   Usuario ID solicitante:', req.user.id);
     console.log('   Polideportivo:', reservaCompleta.polideportivos?.nombre);
     console.log('   Pista:', reservaCompleta.pistas?.nombre);
 
+    // Verificar que la reserva esté pendiente
     if (reservaCompleta.estado !== 'pendiente') {
       return res.status(400).json({ 
         success: false, 
@@ -1005,6 +1010,7 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
+    // Enviar email de confirmación
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
     
@@ -1029,6 +1035,7 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       }
     }
 
+    // Actualizar el estado de la reserva
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
@@ -1087,6 +1094,7 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
     }
 
+    // Obtener la reserva actualizada
     const { data: reservaActualizada } = await supabase
       .from('reservas')
       .select(`
