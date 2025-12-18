@@ -81,7 +81,6 @@ router.get('/', async (req, res) => {
       polideportivo_direccion: pista.polideportivos?.direccion,
       polideportivo_telefono: pista.polideportivos?.telefono,
       disponible: pista.disponible === true || pista.disponible === 1,
-      enMantenimiento: pista.disponible === false || pista.disponible === 0,
       created_at: pista.created_at,
       updated_at: pista.updated_at
     }));
@@ -201,7 +200,6 @@ router.get('/:id', async (req, res) => {
       polideportivo_direccion: pista.polideportivos?.direccion,
       polideportivo_telefono: pista.polideportivos?.telefono,
       disponible: pista.disponible === true || pista.disponible === 1,
-      enMantenimiento: pista.disponible === false || pista.disponible === 0,
       created_at: pista.created_at,
       updated_at: pista.updated_at
     };
@@ -374,7 +372,6 @@ router.post('/',
         polideportivo_nombre: nuevaPista.polideportivos?.nombre,
         polideportivo_direccion: nuevaPista.polideportivos?.direccion,
         disponible: nuevaPista.disponible === true || nuevaPista.disponible === 1,
-        enMantenimiento: nuevaPista.disponible === false || nuevaPista.disponible === 0,
         created_at: nuevaPista.created_at,
         updated_at: nuevaPista.updated_at
       };
@@ -483,7 +480,6 @@ router.get('/mi-polideportivo/pistas',
           polideportivo_direccion: pista.polideportivos?.direccion,
           polideportivo_telefono: pista.polideportivos?.telefono,
           disponible: pista.disponible === true || pista.disponible === 1,
-          enMantenimiento: pista.disponible === false || pista.disponible === 0,
           created_at: pista.created_at,
           updated_at: pista.updated_at,
           estadisticas: {
@@ -511,17 +507,18 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento (sin motivo)
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - FUNCIONANDO
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
     const { id } = req.params;
-    const { enMantenimiento } = req.body; // Solo necesitamos el booleano
+    const { enMantenimiento } = req.body;
     const supabase = req.app.get('supabase');
     const user = req.user;
 
-    console.log(`🛠️ Cambiando mantenimiento pista ${id}, estado:`, enMantenimiento, 'usuario:', user.rol);
+    console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
 
+    // Verificar que el campo es booleano
     if (typeof enMantenimiento !== 'boolean') {
       return res.status(400).json({ 
         success: false,
@@ -533,7 +530,7 @@ router.patch('/:id/mantenimiento',
       // Verificar que la pista existe
       let query = supabase
         .from('pistas')
-        .select('id, polideportivo_id, nombre')
+        .select('id, polideportivo_id, nombre, disponible')
         .eq('id', id);
 
       // Si es admin_poli, solo puede modificar pistas de su polideportivo
@@ -550,13 +547,18 @@ router.patch('/:id/mantenimiento',
         });
       }
 
-      // ✅ CORREGIDO: Solo actualizamos el campo 'disponible'
+      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, nuevo: enMantenimiento = ${enMantenimiento}`);
+
+      // ✅ CORRECCIÓN: SI enMantenimiento = true, entonces disponible = false
+      // ✅ SI enMantenimiento = false, entonces disponible = true
+      const nuevoDisponible = !enMantenimiento;
+
       const updateData = { 
-        disponible: !enMantenimiento,
+        disponible: nuevoDisponible,
         updated_at: new Date().toISOString()
       };
 
-      // Actualizar estado
+      // Actualizar estado en la base de datos
       const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update(updateData)
@@ -571,11 +573,11 @@ router.patch('/:id/mantenimiento',
         console.error('Error al actualizar estado:', updateError);
         return res.status(500).json({ 
           success: false,
-          error: 'Error al actualizar estado de mantenimiento' 
+          error: 'Error al actualizar estado de mantenimiento: ' + updateError.message 
         });
       }
 
-      console.log(`✅ Estado actualizado pista ${id}: ${enMantenimiento ? 'en mantenimiento' : 'disponible'}`);
+      console.log(`✅ Estado actualizado pista ${id}: disponible = ${pistaActualizada.disponible}`);
 
       const respuesta = {
         id: pistaActualizada.id,
@@ -587,14 +589,14 @@ router.patch('/:id/mantenimiento',
         polideportivo_nombre: pistaActualizada.polideportivos?.nombre,
         polideportivo_direccion: pistaActualizada.polideportivos?.direccion,
         disponible: pistaActualizada.disponible === true || pistaActualizada.disponible === 1,
-        enMantenimiento: pistaActualizada.disponible === false || pistaActualizada.disponible === 0,
+        created_at: pistaActualizada.created_at,
         updated_at: pistaActualizada.updated_at
       };
 
       res.json({
         success: true,
         data: respuesta,
-        message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'disponible'} correctamente`
+        message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
       });
 
     } catch (error) {
@@ -686,7 +688,7 @@ router.patch('/:id/precio',
         polideportivo_nombre: pistaActualizada.polideportivos?.nombre,
         polideportivo_direccion: pistaActualizada.polideportivos?.direccion,
         disponible: pistaActualizada.disponible === true || pistaActualizada.disponible === 1,
-        enMantenimiento: pistaActualizada.disponible === false || pistaActualizada.disponible === 0,
+        created_at: pistaActualizada.created_at,
         updated_at: pistaActualizada.updated_at
       };
 
@@ -839,7 +841,7 @@ router.put('/:id',
         polideportivo_nombre: pistaActualizada.polideportivos?.nombre,
         polideportivo_direccion: pistaActualizada.polideportivos?.direccion,
         disponible: pistaActualizada.disponible === true || pistaActualizada.disponible === 1,
-        enMantenimiento: pistaActualizada.disponible === false || pistaActualizada.disponible === 0,
+        created_at: pistaActualizada.created_at,
         updated_at: pistaActualizada.updated_at
       };
 
