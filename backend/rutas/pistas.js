@@ -511,12 +511,12 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// Cambiar estado de mantenimiento (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
+// ✅ CORREGIDO: Cambiar estado de mantenimiento (sin motivo)
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
     const { id } = req.params;
-    const { enMantenimiento, motivo } = req.body;
+    const { enMantenimiento } = req.body; // Solo necesitamos el booleano
     const supabase = req.app.get('supabase');
     const user = req.user;
 
@@ -550,22 +550,11 @@ router.patch('/:id/mantenimiento',
         });
       }
 
-      // Preparar datos de actualización
+      // ✅ CORREGIDO: Solo actualizamos el campo 'disponible'
       const updateData = { 
         disponible: !enMantenimiento,
         updated_at: new Date().toISOString()
       };
-
-      // Agregar motivo de mantenimiento si se proporciona
-      if (motivo && motivo.trim()) {
-        updateData.motivo_mantenimiento = motivo.trim();
-      } else if (enMantenimiento) {
-        // Si se pone en mantenimiento sin motivo, usar uno por defecto
-        updateData.motivo_mantenimiento = 'Mantenimiento programado';
-      } else {
-        // Si se reactiva, limpiar el motivo
-        updateData.motivo_mantenimiento = null;
-      }
 
       // Actualizar estado
       const { data: pistaActualizada, error: updateError } = await supabase
@@ -594,7 +583,6 @@ router.patch('/:id/mantenimiento',
         tipo: pistaActualizada.tipo,
         precio: parseFloat(pistaActualizada.precio),
         descripcion: pistaActualizada.descripcion,
-        motivo_mantenimiento: pistaActualizada.motivo_mantenimiento,
         polideportivo_id: pistaActualizada.polideportivo_id,
         polideportivo_nombre: pistaActualizada.polideportivos?.nombre,
         polideportivo_direccion: pistaActualizada.polideportivos?.direccion,
