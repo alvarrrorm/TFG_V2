@@ -514,13 +514,13 @@ router.get('/mi-polideportivo/pistas',
 // Cambiar estado de mantenimiento (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
-  filtrarPorPolideportivo,
   async (req, res) => {
     const { id } = req.params;
     const { enMantenimiento, motivo } = req.body;
     const supabase = req.app.get('supabase');
+    const user = req.user;
 
-    console.log(`🛠️ Cambiando mantenimiento pista ${id}, estado:`, enMantenimiento);
+    console.log(`🛠️ Cambiando mantenimiento pista ${id}, estado:`, enMantenimiento, 'usuario:', user.rol);
 
     if (typeof enMantenimiento !== 'boolean') {
       return res.status(400).json({ 
@@ -533,12 +533,12 @@ router.patch('/:id/mantenimiento',
       // Verificar que la pista existe
       let query = supabase
         .from('pistas')
-        .select('id, polideportivo_id')
+        .select('id, polideportivo_id, nombre')
         .eq('id', id);
 
       // Si es admin_poli, solo puede modificar pistas de su polideportivo
-      if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
-        query = query.eq('polideportivo_id', req.user.polideportivo_id);
+      if (user.rol === ROLES.ADMIN_POLIDEPORTIVO && user.polideportivo_id) {
+        query = query.eq('polideportivo_id', user.polideportivo_id);
       }
 
       const { data: pista, error: pistaError } = await query.single();
@@ -621,13 +621,13 @@ router.patch('/:id/mantenimiento',
 // Actualizar precio de pista (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
 router.patch('/:id/precio', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
-  filtrarPorPolideportivo,
   async (req, res) => {
     const { id } = req.params;
     const { precio } = req.body;
     const supabase = req.app.get('supabase');
+    const user = req.user;
 
-    console.log(`💰 Actualizando precio pista ${id}, nuevo precio:`, precio);
+    console.log(`💰 Actualizando precio pista ${id}, nuevo precio:`, precio, 'usuario:', user.rol);
 
     if (precio === undefined || isNaN(parseFloat(precio))) {
       return res.status(400).json({ 
@@ -651,8 +651,8 @@ router.patch('/:id/precio',
         .eq('id', id);
 
       // Si es admin_poli, solo puede modificar pistas de su polideportivo
-      if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
-        query = query.eq('polideportivo_id', req.user.polideportivo_id);
+      if (user.rol === ROLES.ADMIN_POLIDEPORTIVO && user.polideportivo_id) {
+        query = query.eq('polideportivo_id', user.polideportivo_id);
       }
 
       const { data: pista, error: pistaError } = await query.single();
@@ -718,20 +718,26 @@ router.patch('/:id/precio',
 });
 
 // ============================================
-// RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición)
+// RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
 // ============================================
 
 // Actualizar pista completa (super_admin en cualquier pista, admin_poli solo en las de su polideportivo)
 router.put('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
-  filtrarPorPolideportivo,
   async (req, res) => {
     const { id } = req.params;
-    const { nombre, tipo, descripcion } = req.body;
+    const { nombre, tipo, precio, descripcion } = req.body;
     const supabase = req.app.get('supabase');
     const user = req.user;
 
-    console.log(`✏️ Actualizando pista ${id}:`, { nombre, tipo, descripcion, user_rol: user.rol });
+    console.log(`✏️ Actualizando pista ${id}:`, { 
+      nombre, 
+      tipo, 
+      precio, 
+      descripcion,
+      user_rol: user.rol,
+      user_poli_id: user.polideportivo_id 
+    });
 
     try {
       // Verificar que la pista existe y tiene permisos para editarla
@@ -758,6 +764,7 @@ router.put('/:id',
       const updateData = {};
       
       if (nombre !== undefined) updateData.nombre = nombre.trim();
+      
       if (tipo !== undefined) {
         // Validar tipo
         const tiposPermitidos = ['Fútbol', 'Baloncesto', 'Tenis', 'Padel', 'Voley', 'Futbol Sala'];
@@ -769,6 +776,17 @@ router.put('/:id',
         }
         updateData.tipo = tipo.trim();
       }
+      
+      if (precio !== undefined) {
+        if (isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+          return res.status(400).json({ 
+            success: false,
+            error: 'El precio debe ser un número válido mayor a 0' 
+          });
+        }
+        updateData.precio = parseFloat(precio);
+      }
+      
       if (descripcion !== undefined) {
         updateData.descripcion = descripcion && descripcion.trim() ? descripcion.trim() : null;
       }
