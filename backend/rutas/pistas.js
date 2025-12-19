@@ -476,6 +476,7 @@ router.get('/mi-polideportivo/pistas',
 });
 
 // ✅ CORREGIDO: Cambiar estado de mantenimiento - FUNCIONANDO
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN FINAL Y CORRECTA
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -515,10 +516,11 @@ router.patch('/:id/mantenimiento',
         });
       }
 
-      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, nuevo: enMantenimiento = ${enMantenimiento}`);
+      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
 
-      // ✅ CORRECCIÓN: SI enMantenimiento = true, entonces disponible = false
-      // ✅ SI enMantenimiento = false, entonces disponible = true
+      // ✅ LÓGICA CORRECTA: 
+      // - Si enMantenimiento = true → poner en mantenimiento → disponible = false
+      // - Si enMantenimiento = false → quitar mantenimiento → disponible = true
       const nuevoDisponible = !enMantenimiento;
 
       const updateData = { 
