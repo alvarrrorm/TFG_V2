@@ -76,6 +76,7 @@ router.get('/', async (req, res) => {
       nombre: pista.nombre,
       tipo: pista.tipo,
       precio: parseFloat(pista.precio),
+      descripcion: pista.descripcion,
       polideportivo_id: pista.polideportivo_id,
       polideportivo_nombre: pista.polideportivos?.nombre,
       polideportivo_direccion: pista.polideportivos?.direccion,
@@ -111,7 +112,7 @@ router.get('/disponibles', async (req, res) => {
     let query = supabase
       .from('pistas')
       .select(`
-        id, nombre, tipo, precio, polideportivo_id,
+        id, nombre, tipo, precio, descripcion, polideportivo_id,
         polideportivos:polideportivo_id (id, nombre)
       `)
       .eq('disponible', true)
@@ -195,6 +196,7 @@ router.get('/:id', async (req, res) => {
       nombre: pista.nombre,
       tipo: pista.tipo,
       precio: parseFloat(pista.precio),
+      descripcion: pista.descripcion,
       polideportivo_id: pista.polideportivo_id,
       polideportivo_nombre: pista.polideportivos?.nombre,
       polideportivo_direccion: pista.polideportivos?.direccion,
@@ -249,7 +251,8 @@ router.post('/',
       });
     }
 
-    if (isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+    const precioNum = parseFloat(precio);
+    if (isNaN(precioNum) || precioNum <= 0) {
       return res.status(400).json({ 
         success: false,
         error: 'El precio debe ser un número válido mayor a 0' 
@@ -333,7 +336,7 @@ router.post('/',
       const nuevaPistaData = {
         nombre: nombre.trim(),
         tipo: tipo.trim(),
-        precio: parseFloat(precio),
+        precio: precioNum,
         polideportivo_id: polideportivoIdFinal,
         disponible: true
       };
@@ -417,8 +420,7 @@ router.get('/mi-polideportivo/pistas',
         .from('pistas')
         .select(`
           *,
-          polideportivos:polideportivo_id (id, nombre, direccion, telefono),
-          reservas!left(count)  # Contar reservas de esta pista
+          polideportivos:polideportivo_id (id, nombre, direccion, telefono)
         `)
         .eq('polideportivo_id', req.user.polideportivo_id)
         .order('tipo')
@@ -443,60 +445,26 @@ router.get('/mi-polideportivo/pistas',
         });
       }
 
-      // Obtener estadísticas de reservas por pista
-      const pistasConEstadisticas = await Promise.all((pistas || []).map(async (pista) => {
-        // Obtener reservas activas de hoy para esta pista
-        const hoy = new Date().toISOString().split('T')[0];
-        const { count: reservasHoy, error: reservasError } = await supabase
-          .from('reservas')
-          .select('*', { count: 'exact', head: true })
-          .eq('pista_id', pista.id)
-          .eq('fecha', hoy)
-          .in('estado', ['pendiente', 'confirmada']);
-
-        // Obtener ingresos mensuales de esta pista
-        const inicioMes = new Date();
-        inicioMes.setDate(1);
-        const { data: reservasMes, error: reservasMesError } = await supabase
-          .from('reservas')
-          .select('precio')
-          .eq('pista_id', pista.id)
-          .eq('estado', 'confirmada')
-          .gte('fecha', inicioMes.toISOString().split('T')[0]);
-
-        let ingresosMes = 0;
-        if (reservasMes && !reservasMesError) {
-          ingresosMes = reservasMes.reduce((total, reserva) => total + parseFloat(reserva.precio || 0), 0);
-        }
-
-        return {
-          id: pista.id,
-          nombre: pista.nombre,
-          tipo: pista.tipo,
-          precio: parseFloat(pista.precio),
-          descripcion: pista.descripcion,
-          polideportivo_id: pista.polideportivo_id,
-          polideportivo_nombre: pista.polideportivos?.nombre,
-          polideportivo_direccion: pista.polideportivos?.direccion,
-          polideportivo_telefono: pista.polideportivos?.telefono,
-          disponible: pista.disponible === true || pista.disponible === 1,
-          created_at: pista.created_at,
-          updated_at: pista.updated_at,
-          estadisticas: {
-            total_reservas: pista.reservas?.[0]?.count || 0,
-            reservas_hoy: reservasHoy || 0,
-            ingresos_mes: parseFloat(ingresosMes.toFixed(2)),
-            popularidad: pista.reservas?.[0]?.count > 10 ? 'alta' : 
-                        pista.reservas?.[0]?.count > 5 ? 'media' : 'baja'
-          }
-        };
+      const pistasFormateadas = (pistas || []).map(pista => ({
+        id: pista.id,
+        nombre: pista.nombre,
+        tipo: pista.tipo,
+        precio: parseFloat(pista.precio),
+        descripcion: pista.descripcion,
+        polideportivo_id: pista.polideportivo_id,
+        polideportivo_nombre: pista.polideportivos?.nombre,
+        polideportivo_direccion: pista.polideportivos?.direccion,
+        polideportivo_telefono: pista.polideportivos?.telefono,
+        disponible: pista.disponible === true || pista.disponible === 1,
+        created_at: pista.created_at,
+        updated_at: pista.updated_at
       }));
 
-      console.log(`✅ Encontradas ${pistasConEstadisticas.length} pistas en el polideportivo`);
+      console.log(`✅ Encontradas ${pistasFormateadas.length} pistas en el polideportivo`);
 
       res.json({
         success: true,
-        data: pistasConEstadisticas
+        data: pistasFormateadas
       });
     } catch (error) {
       console.error('Error al obtener pistas del polideportivo:', error);
@@ -608,7 +576,7 @@ router.patch('/:id/mantenimiento',
     }
 });
 
-// Actualizar precio de pista (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
+// ✅ CORREGIDO: Actualizar precio de pista (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
 router.patch('/:id/precio', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -619,14 +587,22 @@ router.patch('/:id/precio',
 
     console.log(`💰 Actualizando precio pista ${id}, nuevo precio:`, precio, 'usuario:', user.rol);
 
-    if (precio === undefined || isNaN(parseFloat(precio))) {
+    if (precio === undefined) {
       return res.status(400).json({ 
         success: false,
-        error: 'Precio debe ser un número válido' 
+        error: 'El precio es obligatorio' 
       });
     }
 
-    if (parseFloat(precio) <= 0) {
+    const precioNum = parseFloat(precio);
+    if (isNaN(precioNum)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'El precio debe ser un número válido' 
+      });
+    }
+
+    if (precioNum <= 0) {
       return res.status(400).json({ 
         success: false,
         error: 'El precio debe ser mayor a 0' 
@@ -658,7 +634,7 @@ router.patch('/:id/precio',
       const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update({ 
-          precio: parseFloat(precio),
+          precio: precioNum,
           updated_at: new Date().toISOString()
         })
         .eq('id', id)
@@ -672,11 +648,11 @@ router.patch('/:id/precio',
         console.error('Error al actualizar precio:', updateError);
         return res.status(500).json({ 
           success: false,
-          error: 'Error al actualizar precio' 
+          error: 'Error al actualizar precio: ' + updateError.message 
         });
       }
 
-      console.log(`✅ Precio actualizado pista ${id}: ${pista.nombre} - $${parseFloat(precio).toFixed(2)}`);
+      console.log(`✅ Precio actualizado pista ${id}: ${pista.nombre} - $${precioNum.toFixed(2)}`);
 
       const respuesta = {
         id: pistaActualizada.id,
@@ -711,7 +687,7 @@ router.patch('/:id/precio',
 // RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
 // ============================================
 
-// Actualizar pista completa (super_admin en cualquier pista, admin_poli solo en las de su polideportivo)
+// ✅ CORREGIDO: Actualizar pista completa (super_admin en cualquier pista, admin_poli solo en las de su polideportivo)
 router.put('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -744,6 +720,7 @@ router.put('/:id',
       const { data: pistaExistente, error: pistaError } = await query.single();
 
       if (pistaError || !pistaExistente) {
+        console.error('Error al buscar pista:', pistaError);
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
@@ -753,7 +730,9 @@ router.put('/:id',
       // Preparar datos para actualizar
       const updateData = {};
       
-      if (nombre !== undefined) updateData.nombre = nombre.trim();
+      if (nombre !== undefined) {
+        updateData.nombre = nombre.trim();
+      }
       
       if (tipo !== undefined) {
         // Validar tipo
@@ -768,13 +747,14 @@ router.put('/:id',
       }
       
       if (precio !== undefined) {
-        if (isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
+        const precioNum = parseFloat(precio);
+        if (isNaN(precioNum) || precioNum <= 0) {
           return res.status(400).json({ 
             success: false,
             error: 'El precio debe ser un número válido mayor a 0' 
           });
         }
-        updateData.precio = parseFloat(precio);
+        updateData.precio = precioNum;
       }
       
       if (descripcion !== undefined) {
@@ -791,7 +771,7 @@ router.put('/:id',
       }
 
       // Si se cambia el nombre, verificar que no exista otra pista con el mismo nombre en el mismo polideportivo
-      if (nombre !== undefined) {
+      if (nombre !== undefined && nombre.trim() !== pistaExistente.nombre) {
         const polideportivoId = user.rol === ROLES.SUPER_ADMIN ? pistaExistente.polideportivo_id : user.polideportivo_id;
         
         const { data: pistaConMismoNombre, error: nombreError } = await supabase
@@ -825,7 +805,7 @@ router.put('/:id',
         console.error('Error al actualizar pista:', updateError);
         return res.status(500).json({ 
           success: false,
-          error: 'Error al actualizar pista' 
+          error: 'Error al actualizar pista: ' + updateError.message 
         });
       }
 
@@ -855,7 +835,7 @@ router.put('/:id',
       console.error('Error al actualizar pista:', error);
       return res.status(500).json({ 
         success: false,
-        error: 'Error al actualizar pista' 
+        error: 'Error al actualizar pista: ' + error.message 
       });
     }
 });
