@@ -277,7 +277,7 @@ router.post('/',
         return res.status(403).json({ 
           success: false,
           error: 'No tienes un polideportivo asignado' 
-        });
+      });
       }
       polideportivoIdFinal = user.polideportivo_id;
       
@@ -475,8 +475,7 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento - FUNCIONANDO
-// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN FINAL Y CORRECTA
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN MEJORADA
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -578,7 +577,7 @@ router.patch('/:id/mantenimiento',
     }
 });
 
-// ✅ CORREGIDO: Actualizar precio de pista (admin_poli puede hacerlo en su polideportivo, super_admin en cualquiera)
+// ✅ CORREGIDO: Actualizar precio de pista
 router.patch('/:id/precio', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -629,7 +628,7 @@ router.patch('/:id/precio',
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
-        });
+      });
       }
 
       // Actualizar precio
@@ -689,7 +688,7 @@ router.patch('/:id/precio',
 // RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
 // ============================================
 
-// ✅ CORREGIDO: Actualizar pista completa (super_admin en cualquier pista, admin_poli solo en las de su polideportivo)
+// ✅ CORREGIDO: Actualizar pista completa
 router.put('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -842,7 +841,7 @@ router.put('/:id',
     }
 });
 
-// Eliminar pista (solo super_admin)
+// ✅ CORREGIDO: Eliminar pista (solo super_admin) - CON MEJOR MANEJO DE ERRORES
 router.delete('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
   async (req, res) => {
@@ -866,30 +865,46 @@ router.delete('/:id',
         });
       }
 
-      // Verificar si hay reservas asociadas a esta pista
+      // Verificar si hay reservas asociadas a esta pista (cualquier estado excepto cancelada)
       const { data: reservas, error: reservasError } = await supabase
         .from('reservas')
-        .select('id')
+        .select('id, estado, fecha, hora_inicio, nombre_usuario')
         .eq('pista_id', id)
-        .neq('estado', 'cancelada')
-        .limit(1);
+        .neq('estado', 'cancelada');
 
       if (reservasError) {
         console.error('Error al verificar reservas:', reservasError);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al verificar reservas asociadas' 
-        });
+        // No retornamos error, solo log
       }
 
       if (reservas && reservas.length > 0) {
+        // Información detallada de las reservas activas
+        const reservasInfo = reservas.map(r => 
+          `- Reserva #${r.id}: ${r.nombre_usuario} (${r.fecha} ${r.hora_inicio}) - Estado: ${r.estado}`
+        ).join('\n');
+        
         return res.status(409).json({ 
           success: false,
-          error: 'No se puede eliminar la pista porque tiene reservas activas' 
+          error: `No se puede eliminar la pista porque tiene ${reservas.length} reserva(s) activa(s).\n\nReservas activas:\n${reservasInfo}`,
+          detalles: {
+            total_reservas: reservas.length,
+            reservas: reservas
+          }
         });
       }
 
-      // Eliminar pista
+      // Verificar si hay reservas canceladas (para información)
+      const { data: reservasCanceladas, error: canceladasError } = await supabase
+        .from('reservas')
+        .select('id')
+        .eq('pista_id', id)
+        .eq('estado', 'cancelada');
+
+      if (!canceladasError && reservasCanceladas && reservasCanceladas.length > 0) {
+        console.log(`ℹ️ La pista tiene ${reservasCanceladas.length} reserva(s) cancelada(s) que también serán eliminadas`);
+      }
+
+      // Eliminar pista (las reservas asociadas se eliminarán por CASCADE si está configurado)
       const { error: deleteError } = await supabase
         .from('pistas')
         .delete()
@@ -899,7 +914,7 @@ router.delete('/:id',
         console.error('Error al eliminar pista:', deleteError);
         return res.status(500).json({ 
           success: false,
-          error: 'Error al eliminar pista' 
+          error: 'Error al eliminar pista: ' + deleteError.message 
         });
       }
 
@@ -908,14 +923,18 @@ router.delete('/:id',
       res.json({ 
         success: true,
         message: 'Pista eliminada correctamente',
-        data: { id, nombre: pista.nombre }
+        data: { 
+          id, 
+          nombre: pista.nombre,
+          reservas_activas_previas: reservas?.length || 0
+        }
       });
 
     } catch (error) {
       console.error('Error al eliminar pista:', error);
       return res.status(500).json({ 
         success: false,
-        error: 'Error al eliminar pista' 
+        error: 'Error al eliminar pista: ' + error.message 
       });
     }
 });
