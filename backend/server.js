@@ -128,7 +128,7 @@ const authenticateToken = (req, res, next) => {
   
   // 3. Intentar obtener token de query string (solo para desarrollo)
   const tokenFromQuery = req.query?.token;
-  
+
   // Prioridad: Header > Cookie > Query
   const token = tokenFromHeader || tokenFromCookie || tokenFromQuery;
 
@@ -742,74 +742,78 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
   }
 });
 
-// ========== RUTAS DE RECUPERACIÓN ==========
+// ========== RUTAS DE RECUPERACIÓN (ACTUALIZADAS PARA COINCIDIR CON FRONTEND) ==========
+
+// Health check de recuperación
 app.get('/api/recupera/health', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Sistema de recuperación funcionando',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      solicitarRecuperacion: 'POST /api/recupera/solicitar-recuperacion',
+      verificarCodigo: 'POST /api/recupera/verificar-codigo',
+      cambiarPassword: 'POST /api/recupera/cambiar-password',
+      reenviarCodigo: 'POST /api/recupera/reenviar-codigo'
+    }
   });
 });
 
-// Solicitar recuperación de contraseña
-app.post('/api/recupera/solicitar', async (req, res) => {
+// Paso 1: Solicitar código de recuperación (RUTA ACTUALIZADA)
+app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   try {
-    const { usuario, email } = req.body;
+    const { email } = req.body;
     
-    console.log('🔐 Solicitud de recuperación para:', { usuario, email });
+    console.log('🔐 Solicitud de recuperación para email:', email);
     
-    if (!usuario && !email) {
+    if (!email || !validarEmail(email)) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Proporciona usuario o email' 
+        error: 'Por favor, proporciona un email válido' 
       });
     }
 
-    let query = supabase.from('usuarios').select('*');
-    
-    if (usuario) {
-      query = query.eq('usuario', usuario);
-    }
-    if (email) {
-      query = query.eq('correo', email);
-    }
-
-    const { data: user, error } = await query.single();
+    // Verificar si el usuario existe
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('correo', email)
+      .single();
 
     if (error || !user) {
-      console.log('⚠️ Usuario no encontrado:', { usuario, email });
-      // Por seguridad, damos el mismo mensaje aunque no exista
+      console.log('⚠️ Usuario no encontrado con email:', email);
+      // Por seguridad, devolvemos el mismo mensaje aunque no exista
       return res.json({
         success: true,
-        message: 'Si el usuario existe, recibirás un email con el código'
+        message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
       });
     }
 
-    if (!user.correo) {
-      return res.status(400).json({
-        success: false,
-        error: 'Usuario no tiene email registrado'
-      });
-    }
-
+    // Generar código de 6 dígitos
     const codigo = generarCodigo();
     const expiration = new Date();
     expiration.setMinutes(expiration.getMinutes() + 15);
 
+    // Insertar código en la base de datos
     const { error: upsertError } = await supabase
       .from('codigos_recuperacion')
-      .upsert({
+      .insert({
         usuario_id: user.id,
         codigo: codigo,
         expira_en: expiration.toISOString(),
-        usado: false
+        usado: false,
+        created_at: new Date().toISOString()
       });
 
     if (upsertError) {
       console.error('❌ Error guardando código:', upsertError);
-      throw new Error('Error al generar código de recuperación');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al generar código de recuperación' 
+      });
     }
 
+    // Preparar datos para el email
     const datosEmail = {
       usuario: user.usuario,
       nombre_usuario: user.nombre,
@@ -817,15 +821,31 @@ app.post('/api/recupera/solicitar', async (req, res) => {
       codigo: codigo
     };
 
-    await enviarEmailRecuperacion(datosEmail);
+    // Enviar email de recuperación
+    try {
+      await enviarEmailRecuperacion(datosEmail);
+      console.log('✅ Email de recuperación enviado a:', user.correo);
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      
+      // En desarrollo, mostramos el código para testing
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Código generado (modo desarrollo):', codigo);
+      }
+    }
 
     console.log('✅ Código de recuperación generado para:', user.usuario);
     
+    // Devolver respuesta exitosa
     res.json({
       success: true,
-      message: 'Código de recuperación enviado al email registrado',
-      usuario: user.usuario,
-      email: user.correo
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
+      // Solo en desarrollo mostramos información adicional
+      debug: process.env.NODE_ENV !== 'production' ? {
+        usuario: user.usuario,
+        nombre: user.nombre,
+        codigo: codigo
+      } : undefined
     });
 
   } catch (error) {
@@ -837,24 +857,32 @@ app.post('/api/recupera/solicitar', async (req, res) => {
   }
 });
 
-// Verificar código de recuperación
-app.post('/api/recupera/verificar', async (req, res) => {
+// Paso 2: Verificar código de recuperación (RUTA ACTUALIZADA)
+app.post('/api/recupera/verificar-codigo', async (req, res) => {
   try {
-    const { usuario, codigo } = req.body;
+    const { email, codigo } = req.body;
     
-    console.log('🔐 Verificando código para:', usuario);
+    console.log('🔐 Verificando código para email:', email);
     
-    if (!usuario || !codigo) {
+    if (!email || !codigo) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Usuario y código requeridos' 
+        error: 'Email y código requeridos' 
       });
     }
 
+    if (codigo.length !== 6) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'El código debe tener 6 dígitos' 
+      });
+    }
+
+    // Primero obtener el usuario por email
     const { data: user, error: userError } = await supabase
       .from('usuarios')
-      .select('id, usuario, correo')
-      .eq('usuario', usuario)
+      .select('id, usuario, correo, nombre')
+      .eq('correo', email)
       .single();
 
     if (userError || !user) {
@@ -864,6 +892,7 @@ app.post('/api/recupera/verificar', async (req, res) => {
       });
     }
 
+    // Verificar el código en la base de datos
     const { data: codigoData, error: codigoError } = await supabase
       .from('codigos_recuperacion')
       .select('*')
@@ -876,20 +905,25 @@ app.post('/api/recupera/verificar', async (req, res) => {
       .single();
 
     if (codigoError || !codigoData) {
+      console.log('❌ Código inválido o expirado para usuario:', user.usuario);
       return res.status(400).json({ 
         success: false, 
         error: 'Código inválido o expirado' 
       });
     }
 
-    console.log('✅ Código verificado para:', usuario);
+    console.log('✅ Código verificado para:', user.usuario);
     
     res.json({
       success: true,
       message: 'Código verificado correctamente',
-      usuario_id: user.id,
-      usuario: user.usuario,
-      puede_restablecer: true
+      valido: true,
+      usuario: {
+        id: user.id,
+        username: user.usuario,
+        nombre: user.nombre,
+        email: user.correo
+      }
     });
 
   } catch (error) {
@@ -901,38 +935,46 @@ app.post('/api/recupera/verificar', async (req, res) => {
   }
 });
 
-// Restablecer contraseña
-app.post('/api/recupera/restablecer', async (req, res) => {
+// Paso 3: Cambiar contraseña (RUTA ACTUALIZADA)
+app.post('/api/recupera/cambiar-password', async (req, res) => {
   try {
-    const { usuario_id, codigo, nueva_password, confirmar_password } = req.body;
+    const { email, codigo, nuevaPassword } = req.body;
     
-    console.log('🔐 Restableciendo contraseña para usuario ID:', usuario_id);
+    console.log('🔐 Cambiando contraseña para email:', email);
     
-    if (!usuario_id || !codigo || !nueva_password || !confirmar_password) {
+    if (!email || !codigo || !nuevaPassword) {
       return res.status(400).json({ 
         success: false, 
         error: 'Todos los campos son requeridos' 
       });
     }
 
-    if (nueva_password !== confirmar_password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Las contraseñas no coinciden' 
-      });
-    }
-
-    if (nueva_password.length < 6) {
+    if (nuevaPassword.length < 6) {
       return res.status(400).json({ 
         success: false, 
         error: 'La contraseña debe tener al menos 6 caracteres' 
       });
     }
 
+    // Primero obtener el usuario por email
+    const { data: user, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, usuario, correo')
+      .eq('correo', email)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Usuario no encontrado' 
+      });
+    }
+
+    // Verificar el código
     const { data: codigoData, error: codigoError } = await supabase
       .from('codigos_recuperacion')
       .select('*')
-      .eq('usuario_id', usuario_id)
+      .eq('usuario_id', user.id)
       .eq('codigo', codigo)
       .eq('usado', false)
       .gt('expira_en', new Date().toISOString())
@@ -945,15 +987,17 @@ app.post('/api/recupera/restablecer', async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(nueva_password, 10);
+    // Encriptar nueva contraseña
+    const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
 
+    // Actualizar contraseña del usuario
     const { error: updateError } = await supabase
       .from('usuarios')
       .update({ 
         pass: hashedPassword,
         updated_at: new Date().toISOString()
       })
-      .eq('id', usuario_id);
+      .eq('id', user.id);
 
     if (updateError) {
       console.error('❌ Error actualizando contraseña:', updateError);
@@ -963,23 +1007,125 @@ app.post('/api/recupera/restablecer', async (req, res) => {
       });
     }
 
+    // Marcar código como usado
     await supabase
       .from('codigos_recuperacion')
       .update({ usado: true })
       .eq('id', codigoData.id);
 
-    console.log('✅ Contraseña restablecida para usuario ID:', usuario_id);
+    console.log('✅ Contraseña cambiada exitosamente para:', user.usuario);
     
     res.json({
       success: true,
-      message: 'Contraseña restablecida correctamente'
+      message: 'Contraseña cambiada exitosamente',
+      actualizado: true,
+      usuario: {
+        id: user.id,
+        username: user.usuario,
+        email: user.correo
+      }
     });
 
   } catch (error) {
-    console.error('❌ Error restableciendo contraseña:', error);
+    console.error('❌ Error cambiando contraseña:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error al restablecer la contraseña' 
+      error: 'Error al cambiar la contraseña' 
+    });
+  }
+});
+
+// Reenviar código (RUTA ACTUALIZADA)
+app.post('/api/recupera/reenviar-codigo', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    console.log('🔄 Reenviando código para email:', email);
+    
+    if (!email || !validarEmail(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Proporciona un email válido' 
+      });
+    }
+
+    // Verificar si el usuario existe
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('correo', email)
+      .single();
+
+    if (error || !user) {
+      console.log('⚠️ Usuario no encontrado con email:', email);
+      // Por seguridad, devolvemos el mismo mensaje
+      return res.json({
+        success: true,
+        message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
+      });
+    }
+
+    // Generar nuevo código
+    const nuevoCodigo = generarCodigo();
+    const expiration = new Date();
+    expiration.setMinutes(expiration.getMinutes() + 15);
+
+    // Insertar nuevo código
+    const { error: upsertError } = await supabase
+      .from('codigos_recuperacion')
+      .insert({
+        usuario_id: user.id,
+        codigo: nuevoCodigo,
+        expira_en: expiration.toISOString(),
+        usado: false,
+        created_at: new Date().toISOString()
+      });
+
+    if (upsertError) {
+      console.error('❌ Error guardando nuevo código:', upsertError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al generar nuevo código' 
+      });
+    }
+
+    // Preparar datos para el email
+    const datosEmail = {
+      usuario: user.usuario,
+      nombre_usuario: user.nombre,
+      email: user.correo,
+      codigo: nuevoCodigo
+    };
+
+    // Enviar email
+    try {
+      await enviarEmailRecuperacion(datosEmail);
+      console.log('✅ Nuevo email de recuperación enviado a:', user.correo);
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      
+      // En desarrollo, mostramos el código para testing
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Nuevo código generado (modo desarrollo):', nuevoCodigo);
+      }
+    }
+
+    console.log('✅ Nuevo código generado para:', user.usuario);
+    
+    res.json({
+      success: true,
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
+      debug: process.env.NODE_ENV !== 'production' ? {
+        usuario: user.usuario,
+        nuevo_codigo: nuevoCodigo
+      } : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Error reenviando código:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al reenviar el código' 
     });
   }
 });
@@ -1014,38 +1160,27 @@ app.get('/api/recupera/test', async (req, res) => {
   }
 });
 
-// Test email para reservas
-app.get('/api/reservas/test-email', async (req, res) => {
-  try {
-    const testReserva = {
-      id: 999,
-      nombre_usuario: 'Alvaro Ramirez',
-      email: 'alvaroramirezm8@gmail.com',
-      polideportivo_nombre: 'Polideportivo Municipal',
-      pista_nombre: 'Pista 1 - Fútbol',
-      fecha: '2024-12-20',
-      hora_inicio: '16:00',
-      hora_fin: '18:00',
-      precio: 24.50,
-      pistas: { nombre: 'Pista 1 - Fútbol' }
-    };
+// ========== MANTENER RUTAS EXISTENTES PARA BACKWARD COMPATIBILITY ==========
 
-    console.log('🧪 Probando email de confirmación de reserva...');
+// Ruta antigua para compatibilidad
+app.post('/api/recupera/solicitar', async (req, res) => {
+  try {
+    const { usuario, email } = req.body;
     
-    const result = await enviarEmailConfirmacionReserva(testReserva);
+    console.log('⚠️  Ruta antigua /solicitar llamada, redirigiendo...');
     
-    res.json({ 
-      success: true, 
-      message: '✅ Email de confirmación de reserva enviado correctamente',
-      to: testReserva.email,
-      result: result
-    });
+    // Si no viene email, usar el campo usuario como email
+    const emailToUse = email || usuario;
+    
+    // Redirigir a la nueva ruta internamente
+    req.body = { email: emailToUse };
+    return require('./server.js').handleSolicitarRecuperacion(req, res);
     
   } catch (error) {
-    console.error('❌ Error en test de reserva:', error);
+    console.error('❌ Error en ruta antigua:', error);
     res.status(500).json({ 
       success: false, 
-      error: error.message 
+      error: 'Error de compatibilidad' 
     });
   }
 });
@@ -1470,260 +1605,6 @@ app.get('/api/admin-poli/pistas', authenticateToken, verificarEsAdminPoli, async
   }
 });
 
-// Ruta para cambiar estado de mantenimiento de pista (admin_poli)
-app.patch('/api/admin-poli/pistas/:id/mantenimiento', authenticateToken, verificarEsAdminPoli, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { polideportivo_id } = req.user;
-    const { enMantenimiento, motivo } = req.body;
-    
-    console.log('🛠️ Cambiando mantenimiento pista ID:', id, 'para polideportivo:', polideportivo_id);
-    
-    // Verificar que la pista pertenece al polideportivo del admin
-    const { data: pista, error: pistaError } = await supabase
-      .from('pistas')
-      .select('*')
-      .eq('id', id)
-      .eq('polideportivo_id', polideportivo_id)
-      .single();
-    
-    if (pistaError || !pista) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Pista no encontrada o no tienes permisos' 
-      });
-    }
-    
-    // Actualizar pista
-    const { data: pistaActualizada, error: updateError } = await supabase
-      .from('pistas')
-      .update({ 
-        disponible: !enMantenimiento,
-        motivo_mantenimiento: motivo || null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    
-    if (updateError) {
-      console.error('❌ Error actualizando pista:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al actualizar el estado de mantenimiento' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`,
-      data: pistaActualizada
-    });
-    
-  } catch (error) {
-    console.error('❌ Error cambiando mantenimiento:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// Ruta para cambiar precio de pista (admin_poli)
-app.patch('/api/admin-poli/pistas/:id/precio', authenticateToken, verificarEsAdminPoli, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { polideportivo_id } = req.user;
-    const { precio } = req.body;
-    
-    console.log('💰 Cambiando precio pista ID:', id, 'para polideportivo:', polideportivo_id);
-    
-    if (!precio || isNaN(parseFloat(precio)) || parseFloat(precio) <= 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Precio inválido. Debe ser un número mayor a 0' 
-      });
-    }
-    
-    // Verificar que la pista pertenece al polideportivo del admin
-    const { data: pista, error: pistaError } = await supabase
-      .from('pistas')
-      .select('*')
-      .eq('id', id)
-      .eq('polideportivo_id', polideportivo_id)
-      .single();
-    
-    if (pistaError || !pista) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Pista no encontrada o no tienes permisos' 
-      });
-    }
-    
-    // Actualizar pista
-    const { data: pistaActualizada, error: updateError } = await supabase
-      .from('pistas')
-      .update({ 
-        precio: parseFloat(precio),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    
-    if (updateError) {
-      console.error('❌ Error actualizando pista:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al actualizar el precio' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      message: 'Precio actualizado correctamente',
-      data: pistaActualizada
-    });
-    
-  } catch (error) {
-    console.error('❌ Error cambiando precio:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// Ruta para obtener estadísticas del polideportivo (admin_poli)
-app.get('/api/admin-poli/estadisticas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
-  try {
-    const { polideportivo_id } = req.user;
-    const { periodo = 'mes' } = req.query;
-    
-    console.log('📊 Obteniendo estadísticas para polideportivo:', polideportivo_id);
-    
-    const hoy = new Date();
-    let fechaInicio = new Date();
-    
-    // Calcular fecha de inicio según el periodo
-    switch (periodo) {
-      case 'dia':
-        fechaInicio.setHours(0, 0, 0, 0);
-        break;
-      case 'semana':
-        fechaInicio.setDate(fechaInicio.getDate() - 7);
-        break;
-      case 'mes':
-        fechaInicio.setMonth(fechaInicio.getMonth() - 1);
-        break;
-      case 'año':
-        fechaInicio.setFullYear(fechaInicio.getFullYear() - 1);
-        break;
-      default:
-        fechaInicio.setMonth(fechaInicio.getMonth() - 1);
-    }
-    
-    // Estadísticas de reservas
-    const { data: reservasData, error: reservasError } = await supabase
-      .from('reservas')
-      .select('estado, precio, fecha')
-      .eq('polideportivo_id', polideportivo_id)
-      .gte('fecha', fechaInicio.toISOString().split('T')[0])
-      .lte('fecha', hoy.toISOString().split('T')[0]);
-    
-    if (reservasError) {
-      console.error('Error al obtener estadísticas de reservas:', reservasError);
-    }
-    
-    // Calcular estadísticas
-    let totalReservas = 0;
-    let reservasConfirmadas = 0;
-    let reservasPendientes = 0;
-    let reservasCanceladas = 0;
-    let ingresosTotales = 0;
-    
-    if (reservasData) {
-      totalReservas = reservasData.length;
-      reservasData.forEach(reserva => {
-        if (reserva.estado === 'confirmada') {
-          reservasConfirmadas++;
-          ingresosTotales += parseFloat(reserva.precio || 0);
-        } else if (reserva.estado === 'pendiente') {
-          reservasPendientes++;
-        } else if (reserva.estado === 'cancelada') {
-          reservasCanceladas++;
-        }
-      });
-    }
-    
-    // Estadísticas de pistas
-    const { data: pistasData, error: pistasError } = await supabase
-      .from('pistas')
-      .select('id, nombre, tipo, precio, disponible')
-      .eq('polideportivo_id', polideportivo_id);
-    
-    if (pistasError) {
-      console.error('Error al obtener estadísticas de pistas:', pistasError);
-    }
-    
-    let totalPistas = 0;
-    let pistasDisponibles = 0;
-    const pistasPorTipo = {};
-    
-    if (pistasData) {
-      totalPistas = pistasData.length;
-      pistasData.forEach(pista => {
-        if (pista.disponible) {
-          pistasDisponibles++;
-        }
-        
-        if (pistasPorTipo[pista.tipo]) {
-          pistasPorTipo[pista.tipo]++;
-        } else {
-          pistasPorTipo[pista.tipo] = 1;
-        }
-      });
-    }
-    
-    const estadisticas = {
-      periodo: {
-        tipo: periodo,
-        fecha_inicio: fechaInicio.toISOString().split('T')[0],
-        fecha_fin: hoy.toISOString().split('T')[0]
-      },
-      reservas: {
-        total: totalReservas,
-        confirmadas: reservasConfirmadas,
-        pendientes: reservasPendientes,
-        canceladas: reservasCanceladas,
-        tasa_confirmacion: totalReservas > 0 ? (reservasConfirmadas / totalReservas * 100).toFixed(1) + '%' : '0%'
-      },
-      ingresos: {
-        total: parseFloat(ingresosTotales.toFixed(2)),
-        promedio_por_reserva: reservasConfirmadas > 0 ? parseFloat((ingresosTotales / reservasConfirmadas).toFixed(2)) : 0
-      },
-      pistas: {
-        total: totalPistas,
-        disponibles: pistasDisponibles,
-        tasa_disponibilidad: totalPistas > 0 ? (pistasDisponibles / totalPistas * 100).toFixed(1) + '%' : '0%',
-        por_tipo: pistasPorTipo
-      }
-    };
-    
-    res.json({
-      success: true,
-      data: estadisticas
-    });
-    
-  } catch (error) {
-    console.error('❌ Error obteniendo estadísticas:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
 // ========== RUTAS ESPECÍFICAS PARA ADMIN (super_admin y admin general) ==========
 
 // Health check de administración
@@ -1734,126 +1615,6 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
     user: req.user,
     timestamp: new Date().toISOString()
   });
-});
-
-// Ruta para obtener todos los usuarios (admin)
-app.get('/api/admin/usuarios', authenticateToken, verificarEsAdmin, async (req, res) => {
-  try {
-    const { rol, search } = req.query;
-    
-    console.log('👥 Admin obteniendo usuarios');
-    
-    let query = supabase
-      .from('usuarios')
-      .select('id, nombre, usuario, correo, dni, telefono, rol, polideportivo_id, fecha_creacion')
-      .order('fecha_creacion', { ascending: false });
-    
-    if (rol) {
-      query = query.eq('rol', rol);
-    }
-    
-    if (search) {
-      query = query.or(`nombre.ilike.%${search}%,usuario.ilike.%${search}%,correo.ilike.%${search}%`);
-    }
-    
-    const { data: usuarios, error } = await query;
-    
-    if (error) {
-      console.error('❌ Error obteniendo usuarios:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al obtener usuarios' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: usuarios || []
-    });
-    
-  } catch (error) {
-    console.error('❌ Error obteniendo usuarios:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// Ruta para cambiar rol de usuario (admin)
-app.put('/api/admin/usuarios/:id/rol', authenticateToken, verificarEsSuperAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { nuevoRol, polideportivo_id } = req.body;
-    const adminId = req.user.id;
-    
-    console.log('👑 Cambiando rol usuario ID:', id, 'nuevo rol:', nuevoRol);
-    
-    if (!nuevoRol) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Nuevo rol es requerido' 
-      });
-    }
-    
-    // Verificar roles válidos
-    const rolesValidos = [ROLES.SUPER_ADMIN, ROLES.ADMIN_POLIDEPORTIVO, ROLES.ADMIN, ROLES.USUARIO];
-    if (!rolesValidos.includes(nuevoRol)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Rol no válido' 
-      });
-    }
-    
-    // No permitir cambiar tu propio rol
-    if (parseInt(id) === adminId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No puedes cambiar tu propio rol' 
-      });
-    }
-    
-    const updateData = {
-      rol: nuevoRol,
-      updated_at: new Date().toISOString()
-    };
-    
-    // Si es admin_poli, asignar polideportivo_id si se proporciona
-    if (nuevoRol === ROLES.ADMIN_POLIDEPORTIVO && polideportivo_id) {
-      updateData.polideportivo_id = polideportivo_id;
-    } else if (nuevoRol !== ROLES.ADMIN_POLIDEPORTIVO) {
-      updateData.polideportivo_id = null;
-    }
-    
-    // Actualizar usuario
-    const { data: usuarioActualizado, error: updateError } = await supabase
-      .from('usuarios')
-      .update(updateData)
-      .eq('id', id)
-      .select('id, nombre, usuario, correo, rol, polideportivo_id')
-      .single();
-    
-    if (updateError) {
-      console.error('❌ Error actualizando usuario:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al actualizar el rol' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      message: `Rol actualizado a ${nuevoRol}`,
-      data: usuarioActualizado
-    });
-    
-  } catch (error) {
-    console.error('❌ Error cambiando rol:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
 });
 
 // ========== RUTAS PÚBLICAS (AL FINAL) ==========
@@ -1877,6 +1638,7 @@ app.get('/api/health', (req, res) => {
       polideportivos: '/api/polideportivos',
       pistas: '/api/pistas',
       registro: '/api/registro',
+      recuperacion: '/api/recupera/*',
       admin: '/api/admin/* (super_admin y admin)',
       adminPoli: '/api/admin-poli/* (admin_poli con polideportivo)'
     }
@@ -2121,65 +1883,6 @@ app.post('/api/registro', async (req, res) => {
   }
 });
 
-// ========== RUTA PARA CREAR SUPER_ADMIN INICIAL ==========
-if (process.env.NODE_ENV !== 'production') {
-  app.post('/api/setup/super-admin', async (req, res) => {
-    try {
-      const { dni, nombre, correo, usuario, password } = req.body;
-      
-      if (!dni || !nombre || !correo || !usuario || !password) {
-        return res.status(400).json({
-          success: false,
-          error: 'Todos los campos son obligatorios'
-        });
-      }
-      
-      // Verificar si ya existe un super admin
-      const { data: existingAdmin, error: checkError } = await supabase
-        .from('usuarios')
-        .select('id')
-        .eq('rol', ROLES.SUPER_ADMIN)
-        .limit(1);
-        
-      if (checkError) throw checkError;
-      
-      if (existingAdmin && existingAdmin.length > 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Ya existe un super administrador en el sistema'
-        });
-      }
-      
-      const hashedPassword = await bcrypt.hash(password, 10);
-      
-      const { data, error } = await supabase
-        .from('usuarios')
-        .insert([{
-          dni,
-          nombre,
-          correo,
-          usuario,
-          pass: hashedPassword,
-          rol: ROLES.SUPER_ADMIN,
-          fecha_creacion: new Date().toISOString()
-        }])
-        .select()
-        .single();
-        
-      if (error) throw error;
-      
-      res.json({
-        success: true,
-        message: 'Super admin creado exitosamente',
-        data
-      });
-    } catch (error) {
-      console.error('Error creando super admin:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  });
-}
-
 // ========== MANEJO DE ERRORES ==========
 app.use((req, res) => {
   res.status(404).json({ 
@@ -2204,6 +1907,7 @@ app.listen(PORT, () => {
   console.log(`🔐 Sistema de autenticación segura ACTIVADO`);
   console.log(`📧 EmailJS: v5.0.2 configurado`);
   console.log(`🌐 Supabase: ${supabaseUrl}`);
+  console.log(`🔑 Sistema de recuperación de contraseñas ACTIVADO`);
   console.log(`🔑 Sistema de roles jerárquicos ACTIVADO`);
   console.log(`   • ${ROLES.SUPER_ADMIN} (nivel ${NIVELES_PERMISO[ROLES.SUPER_ADMIN]})`);
   console.log(`   • ${ROLES.ADMIN_POLIDEPORTIVO} (nivel ${NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]})`);
@@ -2217,11 +1921,16 @@ app.listen(PORT, () => {
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
+  console.log(`   • Recuperación de contraseñas:`);
+  console.log(`      - POST /api/recupera/solicitar-recuperacion`);
+  console.log(`      - POST /api/recupera/verificar-codigo`);
+  console.log(`      - POST /api/recupera/cambiar-password`);
+  console.log(`      - POST /api/recupera/reenviar-codigo`);
   console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
   console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
-  console.log(`   • Setup Super Admin (solo dev): /api/setup/super-admin`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
+  console.log(`🔑 Recuperación Health: http://localhost:${PORT}/api/recupera/health`);
   console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
 });
 
