@@ -3,20 +3,21 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Ruta de login principal - ACEPTA AMBOS CAMPOS: "pass" O "password"
+// Ruta de login principal - ACEPTA AMBOS: "pass" O "password"
 router.post('/', async (req, res) => {
   const supabase = req.app.get('supabase');
   
-  // ACEPTAR AMBOS CAMPOS PARA COMPATIBILIDAD
+  // ACEPTAR AMBOS CAMPOS
   const { usuario } = req.body;
-  const pass = req.body.pass || req.body.password; // <-- CLAVE: Acepta ambos
+  const pass = req.body.pass || req.body.password;
 
-  console.log('🔐 Login attempt:', usuario, 'Campo usado:', req.body.pass ? 'pass' : 'password');
+  console.log('🔐 Login attempt:', usuario);
 
   if (!usuario || !pass) {
+    console.log('❌ Campos vacíos recibidos');
     return res.status(400).json({
       success: false,
-      error: 'Por favor, rellena todos los campos'
+      error: 'Usuario y contraseña requeridos'
     });
   }
 
@@ -46,21 +47,7 @@ router.post('/', async (req, res) => {
 
     const usuarioEncontrado = usuarios[0];
 
-    // DEBUG: Mostrar información del usuario
-    console.log('✅ Usuario encontrado en DB:', {
-      id: usuarioEncontrado.id,
-      usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol || 'NO TIENE ROL EN DB',
-      polideportivo_id: usuarioEncontrado.polideportivo_id || 'NO TIENE POLI_ID EN DB'
-    });
-
-    // Asegurar que el rol tenga valor
-    if (!usuarioEncontrado.rol) {
-      usuarioEncontrado.rol = 'usuario';
-    }
-
     // Comparar contraseña
-    console.log('🔐 Comparando contraseña...');
     const coincide = await bcrypt.compare(pass, usuarioEncontrado.pass);
 
     if (!coincide) {
@@ -75,7 +62,7 @@ router.post('/', async (req, res) => {
     const payload = {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol,
+      rol: usuarioEncontrado.rol || 'usuario',
       nombre: usuarioEncontrado.nombre,
       correo: usuarioEncontrado.correo,
       dni: usuarioEncontrado.dni,
@@ -100,7 +87,7 @@ router.post('/', async (req, res) => {
         usuario: usuarioEncontrado.usuario,
         dni: usuarioEncontrado.dni,
         correo: usuarioEncontrado.correo,
-        rol: usuarioEncontrado.rol,
+        rol: usuarioEncontrado.rol || 'usuario',
         telefono: usuarioEncontrado.telefono,
         polideportivo_id: usuarioEncontrado.polideportivo_id || null,
         fecha_creacion: usuarioEncontrado.fecha_creacion
@@ -120,7 +107,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Ruta de salud para verificar
+// Ruta de salud
 router.get('/health', (req, res) => {
   res.json({
     success: true,
