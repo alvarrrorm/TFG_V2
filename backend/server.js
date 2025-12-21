@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -7,19 +8,11 @@ const emailjs = require('@emailjs/nodejs');
 // ========== CONFIGURACIÓN ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
 const supabaseKey = process.env.SUPABASE_KEY;
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'mi_clave_refresh_segura_2024';
 
-// VERIFICACIÓN DE VARIABLES CRÍTICAS
-console.log('🔧 Verificando variables de entorno:', {
-  SUPABASE_KEY: supabaseKey ? '✅' : '❌',
-  JWT_SECRET: JWT_SECRET ? '✅' : '❌',
-  JWT_REFRESH_SECRET: JWT_REFRESH_SECRET ? '✅' : '❌',
-  NODE_ENV: process.env.NODE_ENV || '❌ No configurado'
-});
-
-if (!supabaseKey || !JWT_SECRET || !JWT_REFRESH_SECRET) {
-  console.error('❌ ERROR: Variables críticas no configuradas. Verifica tus variables en Railway.');
+if (!supabaseKey) {
+  console.error('❌ ERROR: SUPABASE_KEY no configurada');
   process.exit(1);
 }
 
@@ -45,31 +38,18 @@ const NIVELES_PERMISO = {
 };
 
 // ========== CONFIGURACIÓN EMAILJS v5 ==========
-const emailjsPublicKey = process.env.EMAILJS_PUBLIC_KEY;
-const emailjsPrivateKey = process.env.EMAILJS_PRIVATE_KEY;
-const emailjsRecoveryServiceId = process.env.EMAILJS_RECOVERY_SERVICE_ID;
-const emailjsRecoveryTemplateId = process.env.EMAILJS_RECOVERY_TEMPLATE_ID;
-const emailjsReservaServiceId = process.env.EMAILJS_RESERVA_SERVICE_ID;
-const emailjsReservaTemplateId = process.env.EMAILJS_RESERVA_TEMPLATE_ID;
-
-console.log('📧 Configuración EmailJS:', {
-  publicKey: emailjsPublicKey ? '✅' : '❌',
-  privateKey: emailjsPrivateKey ? '✅' : '❌',
-  recoveryService: emailjsRecoveryServiceId ? '✅' : '❌',
-  recoveryTemplate: emailjsRecoveryTemplateId ? '✅' : '❌',
-  reservaService: emailjsReservaServiceId ? '✅' : '❌',
-  reservaTemplate: emailjsReservaTemplateId ? '✅' : '❌'
-});
+const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
+const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
 
 // Servicios y templates de EmailJS
 const emailjsConfig = {
   recovery: {
-    serviceId: emailjsRecoveryServiceId,
-    templateId: emailjsRecoveryTemplateId
+    serviceId: 'service_r7doupc',
+    templateId: 'template_sy1terr'
   },
   reserva: {
-    serviceId: emailjsReservaServiceId,
-    templateId: emailjsReservaTemplateId
+    serviceId: 'service_lb9lbhi',
+    templateId: 'template_hfuxqzm'
   }
 };
 
@@ -83,7 +63,21 @@ const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, ROLES: US
 Object.assign(ROLES, USUARIOS_ROLES || {});
 Object.assign(NIVELES_PERMISO, USUARIOS_NIVELES || {});
 
-// ========== CONFIGURACIÓN SIMPLE - SIN CORS ==========
+// ========== MIDDLEWARE ==========
+app.use(cors({
+  origin: [
+    'https://www.deppo.es',          // Tu dominio principal
+    'https://deppo.es',              // Versión sin www
+    'http://localhost:3000',         // Desarrollo local
+    'http://localhost:3001',         // Desarrollo local alternativo
+    'http://localhost:8080'          // Si pruebas localmente
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  exposedHeaders: ['Authorization']
+}));
+app.options('*', cors());
 app.use(express.json());
 
 // ========== FUNCIÓN PARA MANEJAR COOKIES SIN COOKIE-PARSER ==========
@@ -122,17 +116,26 @@ const clearCookie = (res, name) => {
 
 // ========== MIDDLEWARE DE AUTENTICACIÓN ==========
 const authenticateToken = (req, res, next) => {
+  console.log('🔐 Middleware authenticateToken ejecutándose');
+  
+  // 1. Intentar obtener token de Authorization header
   const authHeader = req.headers['authorization'];
   const tokenFromHeader = authHeader && authHeader.split(' ')[1];
   
+  // 2. Intentar obtener token de cookie usando nuestra función
   const cookies = parseCookies(req);
   const tokenFromCookie = cookies.auth_token;
   
+  // 3. Intentar obtener token de query string (solo para desarrollo)
   const tokenFromQuery = req.query?.token;
 
+  // Prioridad: Header > Cookie > Query
   const token = tokenFromHeader || tokenFromCookie || tokenFromQuery;
 
+  console.log('📌 Token obtenido:', token ? 'Sí (longitud: ' + token.length + ')' : 'No');
+
   if (!token) {
+    console.log('❌ Token de autenticación requerido');
     return res.status(401).json({ 
       success: false, 
       error: 'Token de autenticación requerido' 
@@ -141,6 +144,7 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
+      console.log('❌ Token inválido o expirado:', err.message);
       return res.status(403).json({ 
         success: false, 
         error: 'Token inválido o expirado',
@@ -148,12 +152,19 @@ const authenticateToken = (req, res, next) => {
       });
     }
     
+    console.log('✅ Token verificado correctamente. Usuario:', {
+      id: user.id,
+      usuario: user.usuario,
+      rol: user.rol
+    });
+    
     req.user = user;
     next();
   });
 };
 
 // ========== MIDDLEWARE PARA VERIFICAR ROLES ==========
+// Middleware para verificar que es admin (super_admin, admin_poli o admin)
 const verificarEsAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -171,6 +182,7 @@ const verificarEsAdmin = (req, res, next) => {
   next();
 };
 
+// Middleware para verificar que es super_admin
 const verificarEsSuperAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -188,6 +200,7 @@ const verificarEsSuperAdmin = (req, res, next) => {
   next();
 };
 
+// Middleware para verificar que es admin_poli
 const verificarEsAdminPoli = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -252,11 +265,6 @@ function generarCodigo() {
 // ========== FUNCIONES DE EMAIL ==========
 async function enviarEmailRecuperacion(datos) {
   try {
-    if (!emailjsPublicKey || !emailjsPrivateKey) {
-      console.error('❌ EmailJS no configurado');
-      throw new Error('EmailJS no configurado');
-    }
-
     const templateParams = {
       user_name: datos.nombre_usuario || 'Usuario',
       user_username: datos.usuario || 'Usuario',
@@ -268,6 +276,8 @@ async function enviarEmailRecuperacion(datos) {
       to_email: datos.email
     };
 
+    console.log('📧 Enviando email de recuperación a:', datos.email);
+    
     const result = await emailjs.send(
       emailjsConfig.recovery.serviceId,
       emailjsConfig.recovery.templateId,
@@ -278,14 +288,15 @@ async function enviarEmailRecuperacion(datos) {
       }
     );
 
-    console.log('✅ Email enviado correctamente a:', datos.email);
+    console.log('✅ Email enviado correctamente con EmailJS v5');
     return result;
 
   } catch (error) {
-    console.error('❌ Error enviando email:', error);
+    console.error('❌ Error enviando email con EmailJS v5:', error);
     
     if (process.env.NODE_ENV !== 'production') {
-      console.log('🔐 Código para desarrollo:', datos.codigo);
+      console.log('🧪 Modo desarrollo: Simulando envío exitoso');
+      console.log('🔐 Código que se enviaría:', datos.codigo);
       return { status: 200, text: 'OK', simulated: true };
     }
     
@@ -295,10 +306,7 @@ async function enviarEmailRecuperacion(datos) {
 
 async function enviarEmailConfirmacionReserva(datosReserva) {
   try {
-    if (!emailjsPublicKey || !emailjsPrivateKey) {
-      console.error('❌ EmailJS no configurado');
-      throw new Error('EmailJS no configurado');
-    }
+    console.log('📧 Preparando email de confirmación de reserva...');
 
     const fechaReserva = new Date(datosReserva.fecha);
     const fechaFormateada = fechaReserva.toLocaleDateString('es-ES', {
@@ -326,6 +334,8 @@ async function enviarEmailConfirmacionReserva(datosReserva) {
       to_email: datosReserva.email
     };
 
+    console.log('📨 Enviando email de confirmación...');
+
     const result = await emailjs.send(
       emailjsConfig.reserva.serviceId,
       emailjsConfig.reserva.templateId,
@@ -336,14 +346,14 @@ async function enviarEmailConfirmacionReserva(datosReserva) {
       }
     );
 
-    console.log('✅ Email de confirmación enviado a:', datosReserva.email);
+    console.log('✅ Email de confirmación enviado correctamente a:', datosReserva.email);
     return result;
 
   } catch (error) {
     console.error('❌ Error enviando email de confirmación:', error);
     
     if (process.env.NODE_ENV !== 'production') {
-      console.log('🧪 Modo desarrollo: Simulando envío exitoso');
+      console.log('🧪 Modo desarrollo: Simulando envío exitoso de confirmación');
       return { status: 200, text: 'OK', simulated: true };
     }
     
@@ -353,7 +363,10 @@ async function enviarEmailConfirmacionReserva(datosReserva) {
 
 async function obtenerEmailUsuario(userId) {
   try {
+    console.log('👤 Buscando email para usuario ID:', userId);
+    
     if (!userId || userId === 0) {
+      console.log('⚠️  Usuario ID no válido o es 0');
       return null;
     }
 
@@ -367,6 +380,17 @@ async function obtenerEmailUsuario(userId) {
       console.error('❌ Error obteniendo usuario:', error);
       return null;
     }
+    
+    if (!usuario) {
+      console.log('⚠️  Usuario no encontrado ID:', userId);
+      return null;
+    }
+    
+    console.log('✅ Usuario encontrado:', {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.correo
+    });
     
     return usuario;
   } catch (error) {
@@ -385,24 +409,33 @@ app.set('verificarEsAdmin', verificarEsAdmin);
 app.set('verificarEsSuperAdmin', verificarEsSuperAdmin);
 app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 
-// ========== REGISTRAR ROUTERS PRINCIPALES ==========
+// ========== REGISTRAR ROUTERS PRINCIPALES PRIMERO ==========
 app.use('/api/reservas', reservasRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
 app.use('/api/usuarios', usuariosRouter);
 
-// ========== RUTAS DE AUTENTICACIÓN ==========
+// ========== RUTAS DE AUTENTICACIÓN SEGURA ==========
+
+// Health check de autenticación
 app.get('/api/auth/health', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Sistema de autenticación funcionando',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    secure: true,
+    cookiesEnabled: true,
+    jwt: '✅ Configurado',
+    refreshTokens: '✅ Configurado'
   });
 });
 
+// Login seguro con cookies HTTP-only
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { usuario, password } = req.body;
+    
+    console.log('🔐 Login seguro para:', usuario);
     
     if (!usuario || !password) {
       return res.status(400).json({
@@ -433,6 +466,7 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
+    // Preparar datos del usuario (sin contraseña)
     const userData = {
       id: user.id,
       usuario: user.usuario,
@@ -444,6 +478,14 @@ app.post('/api/auth/login', async (req, res) => {
       polideportivo_id: user.polideportivo_id || null
     };
 
+    console.log('👤 Datos del usuario para token:', {
+      id: userData.id,
+      usuario: userData.usuario,
+      rol: userData.rol,
+      polideportivo_id: userData.polideportivo_id
+    });
+
+    // Generar token de acceso (expira en 24 horas)
     const accessToken = jwt.sign(
       { 
         ...userData,
@@ -453,6 +495,7 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Generar token de refresco (expira en 7 días)
     const refreshToken = jwt.sign(
       { 
         id: user.id,
@@ -462,8 +505,10 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // Guardar refresh token
     refreshTokens.set(user.id.toString(), refreshToken);
 
+    // Configurar cookies HTTP-only seguras usando nuestra función
     setCookie(res, 'auth_token', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -480,6 +525,9 @@ app.post('/api/auth/login', async (req, res) => {
       path: '/'
     });
 
+    console.log('✅ Login seguro exitoso para:', usuario);
+
+    // También devolver el token en la respuesta para el frontend
     res.json({
       success: true,
       message: 'Login exitoso',
@@ -489,7 +537,7 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en login:', error);
+    console.error('❌ Error en login seguro:', error);
     res.status(500).json({
       success: false,
       error: 'Error interno del servidor'
@@ -501,6 +549,8 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { usuario, password } = req.body;
+    
+    console.log('🔐 Login tradicional para:', usuario);
     
     if (!usuario || !password) {
       return res.status(400).json({
@@ -531,6 +581,7 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
+    // Preparar datos del usuario con polideportivo_id
     const userData = {
       id: user.id,
       usuario: user.usuario,
@@ -542,6 +593,14 @@ app.post('/api/login', async (req, res) => {
       polideportivo_id: user.polideportivo_id || null
     };
 
+    console.log('👤 Datos usuario (tradicional):', {
+      id: userData.id,
+      usuario: userData.usuario,
+      rol: userData.rol,
+      polideportivo_id: userData.polideportivo_id
+    });
+
+    // Generar token
     const token = jwt.sign(
       { 
         ...userData,
@@ -551,6 +610,8 @@ app.post('/api/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    console.log('✅ Login exitoso:', usuario);
+    
     res.json({
       success: true,
       message: 'Login exitoso',
@@ -567,7 +628,9 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Verificar autenticación (usado por ProtectedRoute)
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  console.log('✅ Autenticación verificada para usuario:', req.user?.id);
   res.json({
     success: true,
     message: 'Autenticación válida',
@@ -576,6 +639,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
   });
 });
 
+// Refrescar token
 app.post('/api/auth/refresh', (req, res) => {
   try {
     const cookies = parseCookies(req);
@@ -596,6 +660,7 @@ app.post('/api/auth/refresh', (req, res) => {
         });
       }
 
+      // Verificar que el refresh token está en la lista
       const storedToken = refreshTokens.get(decoded.id.toString());
       
       if (!storedToken || storedToken !== refreshToken) {
@@ -605,6 +670,7 @@ app.post('/api/auth/refresh', (req, res) => {
         });
       }
 
+      // Buscar usuario para obtener datos actualizados
       const { data: user, error } = await supabase
         .from('usuarios')
         .select('id, usuario, nombre, correo, dni, rol, telefono, polideportivo_id')
@@ -618,6 +684,7 @@ app.post('/api/auth/refresh', (req, res) => {
         });
       }
 
+      // Generar nuevo access token
       const newAccessToken = jwt.sign(
         { 
           ...user,
@@ -627,6 +694,7 @@ app.post('/api/auth/refresh', (req, res) => {
         { expiresIn: '24h' }
       );
 
+      // Actualizar cookie
       setCookie(res, 'auth_token', newAccessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -651,10 +719,13 @@ app.post('/api/auth/refresh', (req, res) => {
   }
 });
 
+// Logout seguro
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
   try {
+    // Remover refresh token
     refreshTokens.delete(req.user.id.toString());
     
+    // Limpiar cookies
     clearCookie(res, 'auth_token');
     clearCookie(res, 'refresh_token');
     
@@ -671,19 +742,30 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
   }
 });
 
-// ========== RUTAS DE RECUPERACIÓN ==========
+// ========== RUTAS DE RECUPERACIÓN (ACTUALIZADAS PARA COINCIDIR CON FRONTEND) ==========
+
+// Health check de recuperación
 app.get('/api/recupera/health', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Sistema de recuperación funcionando',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      solicitarRecuperacion: 'POST /api/recupera/solicitar-recuperacion',
+      verificarCodigo: 'POST /api/recupera/verificar-codigo',
+      cambiarPassword: 'POST /api/recupera/cambiar-password',
+      reenviarCodigo: 'POST /api/recupera/reenviar-codigo'
+    }
   });
 });
 
+// Paso 1: Solicitar código de recuperación (RUTA ACTUALIZADA)
 app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   try {
     const { email } = req.body;
-
+    
+    console.log('🔐 Solicitud de recuperación para email:', email);
+    
     if (!email || !validarEmail(email)) {
       return res.status(400).json({ 
         success: false, 
@@ -691,236 +773,175 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    const { data: usuarios, error: userError } = await supabase
+    // Verificar si el usuario existe
+    const { data: user, error } = await supabase
       .from('usuarios')
-      .select('id, nombre, correo, usuario, dni, telefono')
+      .select('*')
       .eq('correo', email)
-      .limit(1);
+      .single();
 
-    if (userError) {
-      console.error('❌ Error en base de datos:', userError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
+    if (error || !user) {
+      console.log('⚠️ Usuario no encontrado con email:', email);
+      // Por seguridad, devolvemos el mismo mensaje aunque no exista
+      return res.json({
+        success: true,
+        message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
       });
     }
 
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
-    if (!usuarios || usuarios.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
-      });
-    }
-
-    const usuario = usuarios[0];
+    // Generar código de 6 dígitos
     const codigo = generarCodigo();
-    
-    const { error: insertError } = await supabase
-      .from('recuperacion_password')
-      .insert([{
-        email: email,
-        codigo: codigo,
-        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        user_id: usuario.id,
-        user_username: usuario.usuario
-      }]);
+    const expiration = new Date();
+    expiration.setMinutes(expiration.getMinutes() + 15);
 
-    if (insertError) {
-      console.error('❌ Error guardando código:', insertError);
+    // Insertar código en la base de datos
+    const { error: upsertError } = await supabase
+      .from('codigos_recuperacion')
+      .insert({
+        usuario_id: user.id,
+        codigo: codigo,
+        expira_en: expiration.toISOString(),
+        usado: false,
+        created_at: new Date().toISOString()
+      });
+
+    if (upsertError) {
+      console.error('❌ Error guardando código:', upsertError);
       return res.status(500).json({ 
         success: false, 
         error: 'Error al generar código de recuperación' 
       });
     }
 
+    // Preparar datos para el email
+    const datosEmail = {
+      usuario: user.usuario,
+      nombre_usuario: user.nombre,
+      email: user.correo,
+      codigo: codigo
+    };
+
+    // Enviar email de recuperación
     try {
-      const datosEmail = {
-        email: usuario.correo,
-        nombre_usuario: usuario.nombre,
-        usuario: usuario.usuario,
+      await enviarEmailRecuperacion(datosEmail);
+      console.log('✅ Email de recuperación enviado a:', user.correo);
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      
+      // En desarrollo, mostramos el código para testing
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Código generado (modo desarrollo):', codigo);
+      }
+    }
+
+    console.log('✅ Código de recuperación generado para:', user.usuario);
+    
+    // Devolver respuesta exitosa
+    res.json({
+      success: true,
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
+      // Solo en desarrollo mostramos información adicional
+      debug: process.env.NODE_ENV !== 'production' ? {
+        usuario: user.usuario,
+        nombre: user.nombre,
         codigo: codigo
-      };
+      } : undefined
+    });
 
-      await enviarEmailRecuperacion(datosEmail);
-      
-      res.json({ 
-        success: true, 
-        message: mensajeSeguro
-      });
-      
-    } catch (emailError) {
-      console.error('❌ Error enviando email de recuperación:', emailError);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Error al enviar el email de recuperación'
-      });
-    }
-    
   } catch (error) {
-    console.error('❌ Error en solicitar-recuperacion:', error);
+    console.error('❌ Error en solicitud de recuperación:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor' 
+      error: 'Error al procesar la solicitud' 
     });
   }
 });
 
-app.post('/api/recupera/reenviar-codigo', async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email || !validarEmail(email)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Por favor, proporciona un email válido' 
-      });
-    }
-
-    const { data: usuarios, error: userError } = await supabase
-      .from('usuarios')
-      .select('id, nombre, correo, usuario')
-      .eq('correo', email)
-      .limit(1);
-
-    if (userError) {
-      console.error('❌ Error en base de datos:', userError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
-      });
-    }
-
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
-    if (!usuarios || usuarios.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
-      });
-    }
-
-    const usuario = usuarios[0];
-    const nuevoCodigo = generarCodigo();
-    
-    const { error: insertError } = await supabase
-      .from('recuperacion_password')
-      .insert([{
-        email: email,
-        codigo: nuevoCodigo,
-        expiracion: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        user_id: usuario.id,
-        user_username: usuario.usuario
-      }]);
-
-    if (insertError) {
-      console.error('❌ Error guardando nuevo código:', insertError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al reenviar el código' 
-      });
-    }
-
-    try {
-      const datosEmail = {
-        email: usuario.correo,
-        nombre_usuario: usuario.nombre,
-        usuario: usuario.usuario,
-        codigo: nuevoCodigo
-      };
-
-      await enviarEmailRecuperacion(datosEmail);
-      
-      res.json({ 
-        success: true, 
-        message: mensajeSeguro
-      });
-      
-    } catch (emailError) {
-      console.error('❌ Error reenviando email de recuperación:', emailError);
-      res.status(500).json({ 
-        success: false, 
-        error: 'Error al reenviar el email de recuperación'
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Error en reenviar-codigo:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
+// Paso 2: Verificar código de recuperación (RUTA ACTUALIZADA)
 app.post('/api/recupera/verificar-codigo', async (req, res) => {
   try {
     const { email, codigo } = req.body;
-
+    
+    console.log('🔐 Verificando código para email:', email);
+    
     if (!email || !codigo) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Email y código son requeridos' 
+        error: 'Email y código requeridos' 
       });
     }
 
-    const { data: recuperaciones, error } = await supabase
-      .from('recuperacion_password')
-      .select('*')
-      .eq('email', email)
-      .eq('codigo', codigo)
-      .eq('usado', false)
-      .gt('expiracion', new Date().toISOString())
-      .order('creado', { ascending: false })
-      .limit(1);
-
-    if (error) {
-      console.error('❌ Error verificando código:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
-      });
-    }
-
-    if (!recuperaciones || recuperaciones.length === 0) {
+    if (codigo.length !== 6) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Código inválido, expirado o ya utilizado' 
+        error: 'El código debe tener 6 dígitos' 
       });
     }
 
-    const recuperacion = recuperaciones[0];
-    
-    const { data: usuario } = await supabase
+    // Primero obtener el usuario por email
+    const { data: user, error: userError } = await supabase
       .from('usuarios')
-      .select('usuario, nombre')
-      .eq('id', recuperacion.user_id)
+      .select('id, usuario, correo, nombre')
+      .eq('correo', email)
       .single();
 
-    res.json({ 
-      success: true, 
+    if (userError || !user) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Usuario no encontrado' 
+      });
+    }
+
+    // Verificar el código en la base de datos
+    const { data: codigoData, error: codigoError } = await supabase
+      .from('codigos_recuperacion')
+      .select('*')
+      .eq('usuario_id', user.id)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expira_en', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (codigoError || !codigoData) {
+      console.log('❌ Código inválido o expirado para usuario:', user.usuario);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Código inválido o expirado' 
+      });
+    }
+
+    console.log('✅ Código verificado para:', user.usuario);
+    
+    res.json({
+      success: true,
       message: 'Código verificado correctamente',
       valido: true,
       usuario: {
-        username: usuario?.usuario,
-        nombre: usuario?.nombre
+        id: user.id,
+        username: user.usuario,
+        nombre: user.nombre,
+        email: user.correo
       }
     });
-    
+
   } catch (error) {
-    console.error('❌ Error en verificar-codigo:', error);
+    console.error('❌ Error verificando código:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor' 
+      error: 'Error al verificar el código' 
     });
   }
 });
 
+// Paso 3: Cambiar contraseña (RUTA ACTUALIZADA)
 app.post('/api/recupera/cambiar-password', async (req, res) => {
   try {
     const { email, codigo, nuevaPassword } = req.body;
-
+    
+    console.log('🔐 Cambiando contraseña para email:', email);
+    
     if (!email || !codigo || !nuevaPassword) {
       return res.status(400).json({ 
         success: false, 
@@ -935,89 +956,181 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
       });
     }
 
-    const { data: recuperaciones, error: verificarError } = await supabase
-      .from('recuperacion_password')
-      .select('*')
-      .eq('email', email)
-      .eq('codigo', codigo)
-      .eq('usado', false)
-      .gt('expiracion', new Date().toISOString())
-      .order('creado', { ascending: false })
-      .limit(1);
+    // Primero obtener el usuario por email
+    const { data: user, error: userError } = await supabase
+      .from('usuarios')
+      .select('id, usuario, correo')
+      .eq('correo', email)
+      .single();
 
-    if (verificarError) {
-      console.error('❌ Error verificando código:', verificarError);
-      return res.status(500).json({ 
+    if (userError || !user) {
+      return res.status(404).json({ 
         success: false, 
-        error: 'Error interno del servidor' 
+        error: 'Usuario no encontrado' 
       });
     }
 
-    if (!recuperaciones || recuperaciones.length === 0) {
+    // Verificar el código
+    const { data: codigoData, error: codigoError } = await supabase
+      .from('codigos_recuperacion')
+      .select('*')
+      .eq('usuario_id', user.id)
+      .eq('codigo', codigo)
+      .eq('usado', false)
+      .gt('expira_en', new Date().toISOString())
+      .single();
+
+    if (codigoError || !codigoData) {
       return res.status(400).json({ 
         success: false, 
         error: 'Código inválido o expirado' 
       });
     }
 
-    const recuperacion = recuperaciones[0];
-    const userId = recuperacion.user_id;
+    // Encriptar nueva contraseña
+    const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
 
-    try {
-      const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
-      
-      const { error: updateError } = await supabase
-        .from('usuarios')
-        .update({ pass: hashedPassword })
-        .eq('id', userId);
+    // Actualizar contraseña del usuario
+    const { error: updateError } = await supabase
+      .from('usuarios')
+      .update({ 
+        pass: hashedPassword,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id);
 
-      if (updateError) {
-        console.error('❌ Error actualizando contraseña:', updateError);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Error al cambiar la contraseña' 
-        });
-      }
-
-      await supabase
-        .from('recuperacion_password')
-        .update({ usado: true })
-        .eq('email', email)
-        .eq('codigo', codigo);
-
-      const { data: usuario } = await supabase
-        .from('usuarios')
-        .select('usuario, nombre')
-        .eq('id', userId)
-        .single();
-
-      res.json({ 
-        success: true, 
-        message: 'Contraseña cambiada exitosamente',
-        actualizado: true,
-        usuario: {
-          username: usuario?.usuario,
-          nombre: usuario?.nombre
-        }
-      });
-
-    } catch (encryptionError) {
-      console.error('❌ Error encriptando contraseña:', encryptionError);
+    if (updateError) {
+      console.error('❌ Error actualizando contraseña:', updateError);
       return res.status(500).json({ 
         success: false, 
-        error: 'Error al procesar la contraseña' 
+        error: 'Error al actualizar la contraseña' 
       });
     }
+
+    // Marcar código como usado
+    await supabase
+      .from('codigos_recuperacion')
+      .update({ usado: true })
+      .eq('id', codigoData.id);
+
+    console.log('✅ Contraseña cambiada exitosamente para:', user.usuario);
     
+    res.json({
+      success: true,
+      message: 'Contraseña cambiada exitosamente',
+      actualizado: true,
+      usuario: {
+        id: user.id,
+        username: user.usuario,
+        email: user.correo
+      }
+    });
+
   } catch (error) {
-    console.error('❌ Error en cambiar-password:', error);
+    console.error('❌ Error cambiando contraseña:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor' 
+      error: 'Error al cambiar la contraseña' 
     });
   }
 });
 
+// Reenviar código (RUTA ACTUALIZADA)
+app.post('/api/recupera/reenviar-codigo', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    console.log('🔄 Reenviando código para email:', email);
+    
+    if (!email || !validarEmail(email)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Proporciona un email válido' 
+      });
+    }
+
+    // Verificar si el usuario existe
+    const { data: user, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('correo', email)
+      .single();
+
+    if (error || !user) {
+      console.log('⚠️ Usuario no encontrado con email:', email);
+      // Por seguridad, devolvemos el mismo mensaje
+      return res.json({
+        success: true,
+        message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
+      });
+    }
+
+    // Generar nuevo código
+    const nuevoCodigo = generarCodigo();
+    const expiration = new Date();
+    expiration.setMinutes(expiration.getMinutes() + 15);
+
+    // Insertar nuevo código
+    const { error: upsertError } = await supabase
+      .from('codigos_recuperacion')
+      .insert({
+        usuario_id: user.id,
+        codigo: nuevoCodigo,
+        expira_en: expiration.toISOString(),
+        usado: false,
+        created_at: new Date().toISOString()
+      });
+
+    if (upsertError) {
+      console.error('❌ Error guardando nuevo código:', upsertError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al generar nuevo código' 
+      });
+    }
+
+    // Preparar datos para el email
+    const datosEmail = {
+      usuario: user.usuario,
+      nombre_usuario: user.nombre,
+      email: user.correo,
+      codigo: nuevoCodigo
+    };
+
+    // Enviar email
+    try {
+      await enviarEmailRecuperacion(datosEmail);
+      console.log('✅ Nuevo email de recuperación enviado a:', user.correo);
+    } catch (emailError) {
+      console.error('❌ Error enviando email:', emailError);
+      
+      // En desarrollo, mostramos el código para testing
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('🧪 Nuevo código generado (modo desarrollo):', nuevoCodigo);
+      }
+    }
+
+    console.log('✅ Nuevo código generado para:', user.usuario);
+    
+    res.json({
+      success: true,
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
+      debug: process.env.NODE_ENV !== 'production' ? {
+        usuario: user.usuario,
+        nuevo_codigo: nuevoCodigo
+      } : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Error reenviando código:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al reenviar el código' 
+    });
+  }
+});
+
+// Test de recuperación
 app.get('/api/recupera/test', async (req, res) => {
   try {
     const testData = {
@@ -1027,6 +1140,8 @@ app.get('/api/recupera/test', async (req, res) => {
       codigo: '123456'
     };
 
+    console.log('🧪 Probando envío de email de recuperación...');
+    
     const result = await enviarEmailRecuperacion(testData);
     
     res.json({ 
@@ -1045,10 +1160,39 @@ app.get('/api/recupera/test', async (req, res) => {
   }
 });
 
-// ========== RUTAS ESPECÍFICAS PARA ADMIN_POLI ==========
+// ========== MANTENER RUTAS EXISTENTES PARA BACKWARD COMPATIBILITY ==========
+
+// Ruta antigua para compatibilidad
+app.post('/api/recupera/solicitar', async (req, res) => {
+  try {
+    const { usuario, email } = req.body;
+    
+    console.log('⚠️  Ruta antigua /solicitar llamada, redirigiendo...');
+    
+    // Si no viene email, usar el campo usuario como email
+    const emailToUse = email || usuario;
+    
+    // Redirigir a la nueva ruta internamente
+    req.body = { email: emailToUse };
+    return require('./server.js').handleSolicitarRecuperacion(req, res);
+    
+  } catch (error) {
+    console.error('❌ Error en ruta antigua:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error de compatibilidad' 
+    });
+  }
+});
+
+// ========== RUTAS ESPECÍFICAS PARA ADMIN_POLI (DESPUÉS DE LOS ROUTERS) ==========
+
+// Ruta para obtener datos específicos del polideportivo del admin_poli
 app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { polideportivo_id } = req.user;
+    
+    console.log('🏢 Obteniendo polideportivo para admin_poli:', polideportivo_id);
     
     const { data: polideportivo, error } = await supabase
       .from('polideportivos')
@@ -1077,10 +1221,13 @@ app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminP
   }
 });
 
+// Ruta para obtener reservas del polideportivo del admin_poli
 app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { polideportivo_id } = req.user;
     const { fecha, estado, nombre_usuario, usuario_id } = req.query;
+    
+    console.log('📋 Obteniendo reservas del polideportivo (admin_poli):', polideportivo_id);
     
     let query = supabase
       .from('reservas')
@@ -1093,6 +1240,7 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
       .order('fecha', { ascending: false })
       .order('hora_inicio', { ascending: false });
     
+    // Filtros
     if (fecha) {
       query = query.eq('fecha', fecha);
     }
@@ -1117,6 +1265,7 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
       });
     }
     
+    // Obtener información de usuarios por separado
     const reservasConInfo = await Promise.all((reservas || []).map(async (reserva) => {
       let usuarioInfo = {
         usuario_login: 'N/A',
@@ -1168,11 +1317,15 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
   }
 });
 
+// Ruta para confirmar reserva (admin_poli)
 app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { id } = req.params;
     const { polideportivo_id } = req.user;
     
+    console.log('✅ Confirmando reserva ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
     const { data: reserva, error: reservaError } = await supabase
       .from('reservas')
       .select('*')
@@ -1194,6 +1347,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
       });
     }
     
+    // Actualizar reserva
     const { data: reservaActualizada, error: updateError } = await supabase
       .from('reservas')
       .update({ 
@@ -1216,6 +1370,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
       });
     }
     
+    // Enviar email de confirmación
     try {
       const datosEmail = {
         id: reservaActualizada.id,
@@ -1235,6 +1390,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
       }
     } catch (emailError) {
       console.error('⚠️  Error enviando email:', emailError);
+      // No fallamos la operación si el email falla
     }
     
     res.json({
@@ -1252,11 +1408,15 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
   }
 });
 
+// Ruta para cancelar reserva (admin_poli)
 app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { id } = req.params;
     const { polideportivo_id } = req.user;
     
+    console.log('❌ Cancelando reserva ID:', id, 'para polideportivo:', polideportivo_id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
     const { data: reserva, error: reservaError } = await supabase
       .from('reservas')
       .select('*')
@@ -1278,6 +1438,7 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
       });
     }
     
+    // Actualizar reserva
     const { data: reservaActualizada, error: updateError } = await supabase
       .from('reservas')
       .update({ 
@@ -1314,7 +1475,139 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
   }
 });
 
-// ========== RUTAS ESPECÍFICAS PARA ADMIN ==========
+// Ruta para reenviar email de confirmación (admin_poli)
+app.post('/api/admin-poli/reservas/:id/reenviar-email', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { polideportivo_id } = req.user;
+    
+    console.log('📧 Reenviando email para reserva ID:', id);
+    
+    // Verificar que la reserva pertenece al polideportivo del admin
+    const { data: reserva, error: reservaError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', id)
+      .eq('polideportivo_id', polideportivo_id)
+      .single();
+    
+    if (reservaError || !reserva) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos' 
+      });
+    }
+    
+    if (reserva.estado !== 'confirmada') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Solo se pueden reenviar emails de reservas confirmadas' 
+      });
+    }
+    
+    // Obtener email del usuario
+    let emailParaEnviar = '';
+    
+    if (reserva.email_usuario) {
+      emailParaEnviar = reserva.email_usuario;
+    } else if (reserva.usuario_id && reserva.usuario_id !== 0) {
+      const usuario = await obtenerEmailUsuario(reserva.usuario_id);
+      if (usuario && usuario.correo) {
+        emailParaEnviar = usuario.correo;
+      }
+    }
+    
+    if (!emailParaEnviar) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No se puede reenviar el email - usuario no tiene email registrado' 
+      });
+    }
+    
+    // Enviar email
+    const datosEmail = {
+      id: reserva.id,
+      nombre_usuario: reserva.nombre_usuario,
+      email: emailParaEnviar,
+      polideportivo_nombre: reserva.polideportivos?.nombre,
+      pista_nombre: reserva.pistas?.nombre,
+      fecha: reserva.fecha,
+      hora_inicio: reserva.hora_inicio,
+      hora_fin: reserva.hora_fin,
+      precio: reserva.precio,
+      pistas: { nombre: reserva.pistas?.nombre }
+    };
+    
+    await enviarEmailConfirmacionReserva(datosEmail);
+    
+    res.json({
+      success: true,
+      message: 'Email de confirmación reenviado exitosamente'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error reenviando email:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para obtener pistas del polideportivo del admin_poli
+app.get('/api/admin-poli/pistas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
+  try {
+    const { polideportivo_id } = req.user;
+    const { tipo, disponible } = req.query;
+    
+    console.log('🎾 Obteniendo pistas del polideportivo:', polideportivo_id);
+    
+    let query = supabase
+      .from('pistas')
+      .select('*')
+      .eq('polideportivo_id', polideportivo_id)
+      .order('tipo')
+      .order('nombre');
+    
+    if (tipo) {
+      query = query.eq('tipo', tipo);
+    }
+    
+    if (disponible !== undefined) {
+      query = query.eq('disponible', disponible === 'true');
+    }
+    
+    const { data: pistas, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error obteniendo pistas:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener pistas' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: pistas || []
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo pistas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// ========== RUTAS ESPECÍFICAS PARA ADMIN (super_admin y admin general) ==========
+
+// Health check de administración
 app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => {
   res.json({ 
     success: true, 
@@ -1324,17 +1617,35 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
   });
 });
 
-// ========== RUTAS PÚBLICAS ==========
+// ========== RUTAS PÚBLICAS (AL FINAL) ==========
+
+// HEALTH CHECK
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: '✅ Backend funcionando',
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
-    secureAuth: true
+    secureAuth: true,
+    endpoints: {
+      auth: '/api/auth/*',
+      login: '/api/auth/login',
+      verify: '/api/auth/verify',
+      refresh: '/api/auth/refresh',
+      logout: '/api/auth/logout',
+      usuarios: '/api/usuarios/*',
+      reservas: '/api/reservas/*',
+      polideportivos: '/api/polideportivos',
+      pistas: '/api/pistas',
+      registro: '/api/registro',
+      recuperacion: '/api/recupera/*',
+      admin: '/api/admin/* (super_admin y admin)',
+      adminPoli: '/api/admin-poli/* (admin_poli con polideportivo)'
+    }
   });
 });
 
+// TEST SUPABASE
 app.get('/api/test-supabase', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1357,6 +1668,7 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
+// POLIDEPORTIVOS
 app.get('/api/polideportivos', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1378,6 +1690,7 @@ app.get('/api/polideportivos', async (req, res) => {
   }
 });
 
+// PISTAS
 app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
@@ -1404,10 +1717,14 @@ app.get('/api/pistas', async (req, res) => {
   }
 });
 
+// ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2 } = req.body;
     
+    console.log('📝 Registro attempt:', usuario);
+
+    // Validaciones básicas
     if (!nombre || !correo || !usuario || !dni || !pass || !pass_2) {
       return res.status(400).json({
         success: false,
@@ -1454,8 +1771,10 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
+    // TODOS los nuevos registros son 'usuario' por defecto
     const rol = ROLES.USUARIO;
 
+    // Verificar duplicados
     const { data: existingUsers, error: errorCheck } = await supabase
       .from('usuarios')
       .select('usuario, correo, dni')
@@ -1485,6 +1804,7 @@ app.post('/api/registro', async (req, res) => {
       }
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(pass, 10);
 
     const datosUsuario = {
@@ -1524,6 +1844,7 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
+    // Generar token
     const token = jwt.sign(
       { 
         id: newUser.id, 
@@ -1536,6 +1857,8 @@ app.post('/api/registro', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    console.log('✅ Usuario registrado exitosamente:', newUser.usuario);
+    
     res.json({
       success: true,
       message: `Usuario registrado correctamente como ${rol}`,
@@ -1578,20 +1901,37 @@ app.use((err, req, res, next) => {
 });
 
 // ========== INICIAR SERVIDOR ==========
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor backend ejecutándose en puerto ${PORT}`);
-  console.log(`🔐 Sistema de autenticación ACTIVADO`);
-  console.log(`📧 EmailJS configurado`);
+  console.log(`🔐 Sistema de autenticación segura ACTIVADO`);
+  console.log(`📧 EmailJS: v5.0.2 configurado`);
   console.log(`🌐 Supabase: ${supabaseUrl}`);
-  console.log(`🔑 Sistema de roles ACTIVADO`);
-  console.log(`🔑 Endpoints disponibles:`);
-  console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh`);
+  console.log(`🔑 Sistema de recuperación de contraseñas ACTIVADO`);
+  console.log(`🔑 Sistema de roles jerárquicos ACTIVADO`);
+  console.log(`   • ${ROLES.SUPER_ADMIN} (nivel ${NIVELES_PERMISO[ROLES.SUPER_ADMIN]})`);
+  console.log(`   • ${ROLES.ADMIN_POLIDEPORTIVO} (nivel ${NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]})`);
+  console.log(`   • ${ROLES.ADMIN} (nivel ${NIVELES_PERMISO[ROLES.ADMIN]})`);
+  console.log(`   • ${ROLES.USUARIO} (nivel ${NIVELES_PERMISO[ROLES.USUARIO]})`);
+  console.log(`🔑 Endpoints principales:`);
+  console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
+  console.log(`   • Login tradicional: /api/login`);
   console.log(`   • Usuarios: /api/usuarios/*`);
-  console.log(`   • Reservas: /api/reservas/*`);
+  console.log(`   • Reservas: /api/reservas/* (INCLUYE /api/reservas/mis-reservas)`);
   console.log(`   • Polideportivos: /api/polideportivos`);
+  console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
-  console.log(`🌐 Railway URL: https://tfgv2-production.up.railway.app`);
+  console.log(`   • Recuperación de contraseñas:`);
+  console.log(`      - POST /api/recupera/solicitar-recuperacion`);
+  console.log(`      - POST /api/recupera/verificar-codigo`);
+  console.log(`      - POST /api/recupera/cambiar-password`);
+  console.log(`      - POST /api/recupera/reenviar-codigo`);
+  console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
+  console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
+  console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
+  console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
+  console.log(`🔑 Recuperación Health: http://localhost:${PORT}/api/recupera/health`);
+  console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
 });
 
 process.on('SIGINT', () => {
