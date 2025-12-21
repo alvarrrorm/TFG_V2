@@ -19,6 +19,67 @@ if (!supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 const app = express();
 
+// ========== CORS DEFINITIVO PARA RAILWAY ==========
+// PRIMERO: Configuración CORS SIMPLE y directa
+const allowedOrigins = [
+  'https://www.deppo.es',
+  'https://deppo.es',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:8080'
+];
+
+// Middleware CORS manual (SIN la librería cors para problemas de Railway)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Permitir origen si está en la lista
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (process.env.NODE_ENV !== 'production') {
+    // En desarrollo, permitir cualquier origen
+    res.header('Access-Control-Allow-Origin', '*');
+  }
+  
+  // Headers CORS esenciales
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin, Accept');
+  res.header('Access-Control-Expose-Headers', 'Authorization');
+  
+  // CRÍTICO: Manejar preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    console.log('✅ Preflight OPTIONS manejado para Railway');
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// SEGUNDO: También usar la librería cors como backup
+app.use(cors({
+  origin: function (origin, callback) {
+    // En desarrollo, permitir cualquier origen
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    // En producción, solo orígenes permitidos
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('🚨 Origen bloqueado por CORS:', origin);
+      callback(new Error('Origen no permitido'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Authorization']
+}));
+
+app.use(express.json());
+
 // Almacenamiento de refresh tokens (en producción usa Redis)
 const refreshTokens = new Map();
 
@@ -62,23 +123,6 @@ const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, ROLES: US
 // Sincronizar los roles importados con los locales
 Object.assign(ROLES, USUARIOS_ROLES || {});
 Object.assign(NIVELES_PERMISO, USUARIOS_NIVELES || {});
-
-// ========== MIDDLEWARE ==========
-app.use(cors({
-  origin: [
-    'https://www.deppo.es',          // Tu dominio principal
-    'https://deppo.es',              // Versión sin www
-    'http://localhost:3000',         // Desarrollo local
-    'http://localhost:3001',         // Desarrollo local alternativo
-    'http://localhost:8080'          // Si pruebas localmente
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true,
-  exposedHeaders: ['Authorization']
-}));
-app.options('*', cors());
-app.use(express.json());
 
 // ========== FUNCIÓN PARA MANEJAR COOKIES SIN COOKIE-PARSER ==========
 const parseCookies = (req) => {
@@ -164,7 +208,6 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ========== MIDDLEWARE PARA VERIFICAR ROLES ==========
-// Middleware para verificar que es admin (super_admin, admin_poli o admin)
 const verificarEsAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -182,7 +225,6 @@ const verificarEsAdmin = (req, res, next) => {
   next();
 };
 
-// Middleware para verificar que es super_admin
 const verificarEsSuperAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -200,7 +242,6 @@ const verificarEsSuperAdmin = (req, res, next) => {
   next();
 };
 
-// Middleware para verificar que es admin_poli
 const verificarEsAdminPoli = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'No autenticado' });
@@ -742,7 +783,7 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
   }
 });
 
-// ========== RUTAS DE RECUPERACIÓN (ACTUALIZADAS PARA COINCIDIR CON FRONTEND) ==========
+// ========== RUTAS DE RECUPERACIÓN ==========
 
 // Health check de recuperación
 app.get('/api/recupera/health', (req, res) => {
@@ -759,7 +800,7 @@ app.get('/api/recupera/health', (req, res) => {
   });
 });
 
-// Paso 1: Solicitar código de recuperación (RUTA ACTUALIZADA)
+// Solicitar recuperación
 app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   try {
     const { email } = req.body;
@@ -773,7 +814,6 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    // Verificar si el usuario existe
     const { data: user, error } = await supabase
       .from('usuarios')
       .select('*')
@@ -839,13 +879,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
     // Devolver respuesta exitosa
     res.json({
       success: true,
-      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
-      // Solo en desarrollo mostramos información adicional
-      debug: process.env.NODE_ENV !== 'production' ? {
-        usuario: user.usuario,
-        nombre: user.nombre,
-        codigo: codigo
-      } : undefined
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
     });
 
   } catch (error) {
@@ -857,7 +891,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   }
 });
 
-// Paso 2: Verificar código de recuperación (RUTA ACTUALIZADA)
+// Verificar código de recuperación
 app.post('/api/recupera/verificar-codigo', async (req, res) => {
   try {
     const { email, codigo } = req.body;
@@ -935,7 +969,7 @@ app.post('/api/recupera/verificar-codigo', async (req, res) => {
   }
 });
 
-// Paso 3: Cambiar contraseña (RUTA ACTUALIZADA)
+// Cambiar contraseña
 app.post('/api/recupera/cambiar-password', async (req, res) => {
   try {
     const { email, codigo, nuevaPassword } = req.body;
@@ -1035,7 +1069,7 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
   }
 });
 
-// Reenviar código (RUTA ACTUALIZADA)
+// Reenviar código
 app.post('/api/recupera/reenviar-codigo', async (req, res) => {
   try {
     const { email } = req.body;
@@ -1114,11 +1148,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación',
-      debug: process.env.NODE_ENV !== 'production' ? {
-        usuario: user.usuario,
-        nuevo_codigo: nuevoCodigo
-      } : undefined
+      message: 'Si el email existe en nuestro sistema, recibirás un código de verificación'
     });
 
   } catch (error) {
@@ -1130,64 +1160,8 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
   }
 });
 
-// Test de recuperación
-app.get('/api/recupera/test', async (req, res) => {
-  try {
-    const testData = {
-      usuario: 'testuser',
-      nombre_usuario: 'Usuario de Prueba',
-      email: 'alvaroramirezm8@gmail.com',
-      codigo: '123456'
-    };
+// ========== RUTAS ESPECÍFICAS PARA ADMIN_POLI ==========
 
-    console.log('🧪 Probando envío de email de recuperación...');
-    
-    const result = await enviarEmailRecuperacion(testData);
-    
-    res.json({ 
-      success: true, 
-      message: '✅ Email de recuperación enviado correctamente',
-      to: testData.email,
-      result: result
-    });
-    
-  } catch (error) {
-    console.error('❌ Error en test de recuperación:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ========== MANTENER RUTAS EXISTENTES PARA BACKWARD COMPATIBILITY ==========
-
-// Ruta antigua para compatibilidad
-app.post('/api/recupera/solicitar', async (req, res) => {
-  try {
-    const { usuario, email } = req.body;
-    
-    console.log('⚠️  Ruta antigua /solicitar llamada, redirigiendo...');
-    
-    // Si no viene email, usar el campo usuario como email
-    const emailToUse = email || usuario;
-    
-    // Redirigir a la nueva ruta internamente
-    req.body = { email: emailToUse };
-    return require('./server.js').handleSolicitarRecuperacion(req, res);
-    
-  } catch (error) {
-    console.error('❌ Error en ruta antigua:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error de compatibilidad' 
-    });
-  }
-});
-
-// ========== RUTAS ESPECÍFICAS PARA ADMIN_POLI (DESPUÉS DE LOS ROUTERS) ==========
-
-// Ruta para obtener datos específicos del polideportivo del admin_poli
 app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { polideportivo_id } = req.user;
@@ -1221,7 +1195,6 @@ app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminP
   }
 });
 
-// Ruta para obtener reservas del polideportivo del admin_poli
 app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { polideportivo_id } = req.user;
@@ -1317,7 +1290,6 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
   }
 });
 
-// Ruta para confirmar reserva (admin_poli)
 app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1390,7 +1362,6 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
       }
     } catch (emailError) {
       console.error('⚠️  Error enviando email:', emailError);
-      // No fallamos la operación si el email falla
     }
     
     res.json({
@@ -1408,7 +1379,6 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
   }
 });
 
-// Ruta para cancelar reserva (admin_poli)
 app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsAdminPoli, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1475,139 +1445,8 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
   }
 });
 
-// Ruta para reenviar email de confirmación (admin_poli)
-app.post('/api/admin-poli/reservas/:id/reenviar-email', authenticateToken, verificarEsAdminPoli, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { polideportivo_id } = req.user;
-    
-    console.log('📧 Reenviando email para reserva ID:', id);
-    
-    // Verificar que la reserva pertenece al polideportivo del admin
-    const { data: reserva, error: reservaError } = await supabase
-      .from('reservas')
-      .select(`
-        *,
-        pistas!inner(nombre),
-        polideportivos!inner(nombre)
-      `)
-      .eq('id', id)
-      .eq('polideportivo_id', polideportivo_id)
-      .single();
-    
-    if (reservaError || !reserva) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Reserva no encontrada o no tienes permisos' 
-      });
-    }
-    
-    if (reserva.estado !== 'confirmada') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Solo se pueden reenviar emails de reservas confirmadas' 
-      });
-    }
-    
-    // Obtener email del usuario
-    let emailParaEnviar = '';
-    
-    if (reserva.email_usuario) {
-      emailParaEnviar = reserva.email_usuario;
-    } else if (reserva.usuario_id && reserva.usuario_id !== 0) {
-      const usuario = await obtenerEmailUsuario(reserva.usuario_id);
-      if (usuario && usuario.correo) {
-        emailParaEnviar = usuario.correo;
-      }
-    }
-    
-    if (!emailParaEnviar) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No se puede reenviar el email - usuario no tiene email registrado' 
-      });
-    }
-    
-    // Enviar email
-    const datosEmail = {
-      id: reserva.id,
-      nombre_usuario: reserva.nombre_usuario,
-      email: emailParaEnviar,
-      polideportivo_nombre: reserva.polideportivos?.nombre,
-      pista_nombre: reserva.pistas?.nombre,
-      fecha: reserva.fecha,
-      hora_inicio: reserva.hora_inicio,
-      hora_fin: reserva.hora_fin,
-      precio: reserva.precio,
-      pistas: { nombre: reserva.pistas?.nombre }
-    };
-    
-    await enviarEmailConfirmacionReserva(datosEmail);
-    
-    res.json({
-      success: true,
-      message: 'Email de confirmación reenviado exitosamente'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error reenviando email:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
+// ========== RUTAS ESPECÍFICAS PARA ADMIN ==========
 
-// Ruta para obtener pistas del polideportivo del admin_poli
-app.get('/api/admin-poli/pistas', authenticateToken, verificarEsAdminPoli, async (req, res) => {
-  try {
-    const { polideportivo_id } = req.user;
-    const { tipo, disponible } = req.query;
-    
-    console.log('🎾 Obteniendo pistas del polideportivo:', polideportivo_id);
-    
-    let query = supabase
-      .from('pistas')
-      .select('*')
-      .eq('polideportivo_id', polideportivo_id)
-      .order('tipo')
-      .order('nombre');
-    
-    if (tipo) {
-      query = query.eq('tipo', tipo);
-    }
-    
-    if (disponible !== undefined) {
-      query = query.eq('disponible', disponible === 'true');
-    }
-    
-    const { data: pistas, error } = await query;
-    
-    if (error) {
-      console.error('❌ Error obteniendo pistas:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al obtener pistas' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: pistas || []
-    });
-    
-  } catch (error) {
-    console.error('❌ Error obteniendo pistas:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor' 
-    });
-  }
-});
-
-// ========== RUTAS ESPECÍFICAS PARA ADMIN (super_admin y admin general) ==========
-
-// Health check de administración
 app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => {
   res.json({ 
     success: true, 
@@ -1617,35 +1456,17 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
   });
 });
 
-// ========== RUTAS PÚBLICAS (AL FINAL) ==========
-
-// HEALTH CHECK
+// ========== RUTAS PÚBLICAS ==========
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: '✅ Backend funcionando',
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
-    secureAuth: true,
-    endpoints: {
-      auth: '/api/auth/*',
-      login: '/api/auth/login',
-      verify: '/api/auth/verify',
-      refresh: '/api/auth/refresh',
-      logout: '/api/auth/logout',
-      usuarios: '/api/usuarios/*',
-      reservas: '/api/reservas/*',
-      polideportivos: '/api/polideportivos',
-      pistas: '/api/pistas',
-      registro: '/api/registro',
-      recuperacion: '/api/recupera/*',
-      admin: '/api/admin/* (super_admin y admin)',
-      adminPoli: '/api/admin-poli/* (admin_poli con polideportivo)'
-    }
+    secureAuth: true
   });
 });
 
-// TEST SUPABASE
 app.get('/api/test-supabase', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1668,7 +1489,6 @@ app.get('/api/test-supabase', async (req, res) => {
   }
 });
 
-// POLIDEPORTIVOS
 app.get('/api/polideportivos', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1690,7 +1510,6 @@ app.get('/api/polideportivos', async (req, res) => {
   }
 });
 
-// PISTAS
 app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
@@ -1717,7 +1536,6 @@ app.get('/api/pistas', async (req, res) => {
   }
 });
 
-// ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
     const { nombre, correo, usuario, dni, telefono, pass, pass_2 } = req.body;
@@ -1771,7 +1589,6 @@ app.post('/api/registro', async (req, res) => {
       });
     }
 
-    // TODOS los nuevos registros son 'usuario' por defecto
     const rol = ROLES.USUARIO;
 
     // Verificar duplicados
@@ -1917,21 +1734,13 @@ app.listen(PORT, () => {
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
   console.log(`   • Login tradicional: /api/login`);
   console.log(`   • Usuarios: /api/usuarios/*`);
-  console.log(`   • Reservas: /api/reservas/* (INCLUYE /api/reservas/mis-reservas)`);
+  console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
-  console.log(`   • Recuperación de contraseñas:`);
-  console.log(`      - POST /api/recupera/solicitar-recuperacion`);
-  console.log(`      - POST /api/recupera/verificar-codigo`);
-  console.log(`      - POST /api/recupera/cambiar-password`);
-  console.log(`      - POST /api/recupera/reenviar-codigo`);
-  console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
-  console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
-  console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
-  console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
-  console.log(`🔑 Recuperación Health: http://localhost:${PORT}/api/recupera/health`);
-  console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
+  console.log(`🌐 Railway URL: https://tfgv2-production.up.railway.app`);
+  console.log(`✅ Health Check: https://tfgv2-production.up.railway.app/api/health`);
+  console.log(`✅ Auth Health: https://tfgv2-production.up.railway.app/api/auth/health`);
 });
 
 process.on('SIGINT', () => {
