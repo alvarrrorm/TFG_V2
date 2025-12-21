@@ -4,7 +4,7 @@
   "description": "Backend para TFG",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node server.js"
   },
   "dependencies": {
     "@emailjs/nodejs": "^5.0.2",
