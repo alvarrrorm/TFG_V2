@@ -38,7 +38,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin);
   } else if (process.env.NODE_ENV !== 'production') {
     // En desarrollo, permitir cualquier origen
-    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-ControlAllow--Origin', '*');
   }
   
   // Headers CORS esenciales
