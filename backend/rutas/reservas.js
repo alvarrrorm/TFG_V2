@@ -537,7 +537,7 @@ router.post('/', authenticateToken, async (req, res) => {
         precio: precioFinal,
         estado: estado,
         email_usuario: usuarioEmail,
-        ludoteca: ludoteca // ✅ Ahora la columna existe
+        ludoteca: ludoteca
       }])
       .select(`
         *,
@@ -764,7 +764,7 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       hora_inicio: horaInicio,
       hora_fin: horaFin,
       precio: precioFinal,
-      ludoteca: ludoteca, // ✅ Ahora la columna existe
+      ludoteca: ludoteca,
       fecha_modificacion: new Date().toISOString()
     };
 
@@ -838,8 +838,117 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// 👇 RUTA ESPECÍFICA PARA OBTENER RESERVAS DE UN USUARIO (NUEVA RUTA)
+router.get('/usuario/:id', authenticateToken, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { id } = req.params;
+  
+  console.log('🔍 [ALTERNATIVA] Obteniendo reservas para usuario ID:', id, 'Solicitante:', req.user?.id);
+
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Usuario no autenticado' 
+    });
+  }
+
+  // Verificar permisos:
+  // 1. El usuario está viendo sus propias reservas
+  // 2. Es un administrador viendo otras reservas
+  const usuarioIdParam = parseInt(id);
+  
+  let tienePermiso = false;
+  let usuarioIdParaBuscar = req.user.id;
+  
+  if (req.user.id === usuarioIdParam) {
+    // Usuario viendo SUS PROPIAS reservas
+    tienePermiso = true;
+    usuarioIdParaBuscar = req.user.id;
+    console.log('✅ Usuario viendo sus propias reservas');
+  } 
+  else if (req.user.rol === ROLES.ADMIN || req.user.rol === ROLES.SUPER_ADMIN) {
+    // Admin viendo reservas de otro usuario
+    tienePermiso = true;
+    usuarioIdParaBuscar = usuarioIdParam;
+    console.log('👑 Admin viendo reservas de usuario ID:', usuarioIdParam);
+  }
+  else if (req.user.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user.polideportivo_id) {
+    // Admin_poli solo puede ver reservas de SU polideportivo
+    // Necesitamos verificar si el usuario pertenece a su polideportivo
+    try {
+      const { data: usuarioTarget, error: usuarioError } = await supabase
+        .from('usuarios')
+        .select('polideportivo_id')
+        .eq('id', usuarioIdParam)
+        .single();
+      
+      if (!usuarioError && usuarioTarget && usuarioTarget.polideportivo_id === req.user.polideportivo_id) {
+        tienePermiso = true;
+        usuarioIdParaBuscar = usuarioIdParam;
+        console.log('👑 Admin_poli viendo reservas de usuario en su polideportivo');
+      } else {
+        console.log('🚫 Admin_poli no puede ver reservas de usuario de otro polideportivo');
+      }
+    } catch (error) {
+      console.error('Error verificando usuario:', error);
+    }
+  }
+
+  if (!tienePermiso) {
+    console.log('🚫 Acceso denegado - No tienes permisos para ver estas reservas');
+    return res.status(403).json({ 
+      success: false, 
+      error: 'No tienes permisos para ver estas reservas' 
+    });
+  }
+
+  try {
+    let query = supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .eq('usuario_id', usuarioIdParaBuscar)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+
+    const { data: reservas, error } = await query;
+
+    if (error) {
+      console.error('❌ Error al obtener reservas:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener reservas' 
+      });
+    }
+    
+    console.log(`📊 Se encontraron ${reservas?.length || 0} reservas para el usuario ID: ${usuarioIdParaBuscar}`);
+    
+    const reservasConLudoteca = (reservas || []).map(reserva => ({
+      ...reserva,
+      ludoteca: reserva.ludoteca || false,
+      pistaNombre: reserva.pistas?.nombre,
+      pistaTipo: reserva.pistas?.tipo,
+      polideportivo_nombre: reserva.polideportivos?.nombre
+    }));
+
+    res.json({ 
+      success: true, 
+      data: reservasConLudoteca,
+      message: `Se encontraron ${reservasConLudoteca.length} reservas`
+    });
+  } catch (error) {
+    console.error('❌ Error al obtener reservas:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error al obtener reservas' 
+    });
+  }
+});
+
 // 👇 RUTA MIS RESERVAS - CORREGIDA Y SIMPLIFICADA
-// TODOS los usuarios autenticados pueden ver SUS PROPIAS reservas
 router.get('/mis-reservas', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   
@@ -906,8 +1015,6 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
 });
 
 // 👇 RUTA PARA OBTENER RESERVA POR ID - CORREGIDA
-// Usuarios pueden ver SUS PROPIAS reservas
-// Administradores pueden ver cualquier reserva
 router.get('/:id', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
@@ -975,7 +1082,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTA ESPECÍFICA PARA ADMIN_POLI (NUEVA)
+// 👇 RUTA ESPECÍFICA PARA ADMIN_POLI
 router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   
@@ -1193,7 +1300,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// 👇 RUTA ESPECÍFICA: CONFIRMAR RESERVA - MODIFICADA PARA PERMITIR A USUARIOS CONFIRMAR SUS RESERVAS
+// 👇 RUTA ESPECÍFICA: CONFIRMAR RESERVA
 router.put('/:id/confirmar', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
@@ -1207,7 +1314,6 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
   const reservaId = parseInt(id);
 
   try {
-    // 1. Obtener los datos COMPLETOS de la reserva
     let query = supabase
       .from('reservas')
       .select(`
@@ -1236,20 +1342,16 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
     console.log('   Usuario ID solicitante:', req.user.id);
     console.log('   Rol del solicitante:', req.user?.rol);
 
-    // ✅ PERMITIR A TODOS LOS USUARIOS AUTENTICADOS CONFIRMAR SUS PROPIAS RESERVAS
     let tienePermiso = false;
     
-    // 1. Usuario normal confirmando su propia reserva
     if (reservaCompleta.usuario_id === req.user.id) {
       tienePermiso = true;
       console.log('✅ Permiso concedido: Usuario confirmando su propia reserva');
     }
-    // 2. Administradores confirmando reservas de su polideportivo
     else if (req.user?.rol === ROLES.ADMIN_POLIDEPORTIVO && req.user?.polideportivo_id) {
       tienePermiso = (reservaCompleta.polideportivo_id === req.user.polideportivo_id);
       console.log(`👑 Verificación admin_poli: ${reservaCompleta.polideportivo_id} === ${req.user.polideportivo_id} ? ${tienePermiso}`);
     }
-    // 3. Admin y super_admin pueden confirmar cualquier reserva
     else if (req.user?.rol === ROLES.ADMIN || req.user?.rol === ROLES.SUPER_ADMIN) {
       tienePermiso = true;
       console.log('👑 Verificación admin/super_admin: acceso permitido');
@@ -1263,7 +1365,6 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
-    // Enviar email de confirmación
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
     
@@ -1288,7 +1389,6 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       }
     }
 
-    // Actualizar el estado de la reserva
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
@@ -1347,7 +1447,6 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       mensajeEmail = 'Reserva confirmada, pero no se encontró email del usuario';
     }
 
-    // Obtener la reserva actualizada
     const { data: reservaActualizada } = await supabase
       .from('reservas')
       .select(`
@@ -1565,7 +1664,7 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
   }
 });
 
-// RUTA ESPECÍFICA: CANCELAR RESERVA (usuario, admin_poli o superior)
+// RUTA ESPECÍFICA: CANCELAR RESERVA
 router.put('/:id/cancelar', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
@@ -1644,7 +1743,7 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
   }
 });
 
-// RUTA ESPECÍFICA: REENVIAR EMAIL (admin_poli o superior)
+// RUTA ESPECÍFICA: REENVIAR EMAIL
 router.post('/:id/reenviar-email', authenticateToken, async (req, res) => {
   const supabase = req.app.get('supabase');
   const { id } = req.params;
@@ -1966,7 +2065,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (estado !== undefined) updateData.estado = estado;
     if (nuevoPolideportivoId !== null) updateData.polideportivo_id = nuevoPolideportivoId;
     
-    // ✅ Agregar ludoteca si existe en el body
     if (ludoteca !== undefined) {
       updateData.ludoteca = ludoteca;
     }
