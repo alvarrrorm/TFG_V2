@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -84,58 +83,7 @@ const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, ROLES: US
 Object.assign(ROLES, USUARIOS_ROLES || {});
 Object.assign(NIVELES_PERMISO, USUARIOS_NIVELES || {});
 
-// ========== CONFIGURACIÓN CORS INFALIBLE ==========
-const allowedOrigins = [
-  'https://www.deppo.es',
-  'https://deppo.es',
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:8080'
-];
-
-console.log('🌐 Configuración CORS para producción. Orígenes permitidos:', allowedOrigins);
-
-// Middleware CORS principal
-app.use(cors({
-  origin: function (origin, callback) {
-    // En desarrollo, permitir cualquier origen
-    if (process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    
-    // En producción, verificar el origen
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('🚨 Origen bloqueado por CORS:', origin);
-      callback(new Error('Origen no permitido'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Authorization']
-}));
-
-// Middleware CRÍTICO: Manejar manualmente headers CORS en todas las respuestas
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  }
-  
-  // Manejar preflight requests específicamente
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
-
+// ========== CONFIGURACIÓN SIMPLE - SIN CORS ==========
 app.use(express.json());
 
 // ========== FUNCIÓN PARA MANEJAR COOKIES SIN COOKIE-PARSER ==========
@@ -174,18 +122,14 @@ const clearCookie = (res, name) => {
 
 // ========== MIDDLEWARE DE AUTENTICACIÓN ==========
 const authenticateToken = (req, res, next) => {
-  // 1. Intentar obtener token de Authorization header
   const authHeader = req.headers['authorization'];
   const tokenFromHeader = authHeader && authHeader.split(' ')[1];
   
-  // 2. Intentar obtener token de cookie usando nuestra función
   const cookies = parseCookies(req);
   const tokenFromCookie = cookies.auth_token;
   
-  // 3. Intentar obtener token de query string (solo para desarrollo)
   const tokenFromQuery = req.query?.token;
 
-  // Prioridad: Header > Cookie > Query
   const token = tokenFromHeader || tokenFromCookie || tokenFromQuery;
 
   if (!token) {
@@ -1647,7 +1591,7 @@ app.listen(PORT, () => {
   console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Registro: /api/registro`);
-  console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
+  console.log(`🌐 Railway URL: https://tfgv2-production.up.railway.app`);
 });
 
 process.on('SIGINT', () => {
