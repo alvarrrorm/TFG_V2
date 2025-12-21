@@ -3,21 +3,28 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Ruta de login principal - ACEPTA AMBOS: "pass" O "password"
-router.post('/', async (req, res) => {
+// ✅ Ruta de login principal - COMPATIBLE CON AMBOS CAMPOS
+router.post('/login', async (req, res) => {
   const supabase = req.app.get('supabase');
   
-  // ACEPTAR AMBOS CAMPOS
+  // ✅ ACEPTAR AMBOS FORMATOS PARA COMPATIBILIDAD
   const { usuario } = req.body;
-  const pass = req.body.pass || req.body.password;
+  const pass = req.body.pass || req.body.password; // Acepta ambos
+  
+  console.log('🔐 Login attempt (router):', usuario, 'Campo password recibido:', 
+    req.body.pass ? 'pass' : (req.body.password ? 'password' : 'ninguno'));
 
-  console.log('🔐 Login attempt:', usuario);
-
+  // Validación
   if (!usuario || !pass) {
-    console.log('❌ Campos vacíos recibidos');
+    console.log('❌ Faltan datos:', { usuario: !!usuario, password: !!pass });
     return res.status(400).json({
       success: false,
-      error: 'Usuario y contraseña requeridos'
+      error: 'Usuario y contraseña requeridos',
+      received: {
+        usuario: usuario,
+        hasPass: !!req.body.pass,
+        hasPassword: !!req.body.password
+      }
     });
   }
 
@@ -26,11 +33,11 @@ router.post('/', async (req, res) => {
     const { data: usuarios, error } = await supabase
       .from('usuarios')
       .select('*')
-      .eq('usuario', usuario)
+      .eq('usuario', usuario.trim())
       .limit(1);
 
     if (error) {
-      console.error('Error en consulta Supabase:', error);
+      console.error('❌ Error en consulta Supabase:', error);
       return res.status(500).json({
         success: false,
         error: 'Error interno del servidor'
@@ -47,7 +54,20 @@ router.post('/', async (req, res) => {
 
     const usuarioEncontrado = usuarios[0];
 
+    console.log('✅ Usuario encontrado en DB:', {
+      id: usuarioEncontrado.id,
+      usuario: usuarioEncontrado.usuario,
+      rol: usuarioEncontrado.rol || 'NO TIENE ROL',
+      polideportivo_id: usuarioEncontrado.polideportivo_id || 'NO TIENE POLI_ID'
+    });
+
+    // Asegurar que el rol tenga valor
+    if (!usuarioEncontrado.rol) {
+      usuarioEncontrado.rol = 'usuario';
+    }
+
     // Comparar contraseña
+    console.log('🔐 Comparando contraseña...');
     const coincide = await bcrypt.compare(pass, usuarioEncontrado.pass);
 
     if (!coincide) {
@@ -58,11 +78,11 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Datos para el token JWT
+    // ✅ Datos para el token JWT - INCLUYE POLIDEPORTIVO_ID
     const payload = {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol || 'usuario',
+      rol: usuarioEncontrado.rol,
       nombre: usuarioEncontrado.nombre,
       correo: usuarioEncontrado.correo,
       dni: usuarioEncontrado.dni,
@@ -76,7 +96,7 @@ router.post('/', async (req, res) => {
       expiresIn: '24h'
     });
 
-    // Respuesta exitosa
+    // ✅ Respuesta exitosa - INCLUYE POLIDEPORTIVO_ID
     const responseData = {
       success: true,
       message: 'Inicio de sesión exitoso',
@@ -87,7 +107,7 @@ router.post('/', async (req, res) => {
         usuario: usuarioEncontrado.usuario,
         dni: usuarioEncontrado.dni,
         correo: usuarioEncontrado.correo,
-        rol: usuarioEncontrado.rol || 'usuario',
+        rol: usuarioEncontrado.rol,
         telefono: usuarioEncontrado.telefono,
         polideportivo_id: usuarioEncontrado.polideportivo_id || null,
         fecha_creacion: usuarioEncontrado.fecha_creacion
@@ -95,6 +115,11 @@ router.post('/', async (req, res) => {
     };
 
     console.log('✅ Login exitoso para:', usuarioEncontrado.usuario);
+    console.log('📤 Enviando respuesta:', {
+      userId: usuarioEncontrado.id,
+      rol: usuarioEncontrado.rol,
+      polideportivo_id: usuarioEncontrado.polideportivo_id
+    });
     
     return res.status(200).json(responseData);
 
@@ -102,17 +127,19 @@ router.post('/', async (req, res) => {
     console.error('❌ Error al procesar el login:', error);
     return res.status(500).json({
       success: false,
-      error: 'Error interno del servidor'
+      error: 'Error interno del servidor: ' + error.message
     });
   }
 });
 
-// Ruta de salud
-router.get('/health', (req, res) => {
+// Ruta de salud para verificar
+router.get('/login/health', (req, res) => {
   res.json({
     success: true,
     message: 'Sistema de login funcionando',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    accepts: ['pass', 'password'],
+    note: 'El campo de contraseña puede enviarse como "pass" o "password"'
   });
 });
 
