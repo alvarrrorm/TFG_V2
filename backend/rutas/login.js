@@ -3,12 +3,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Ruta de login
+// Ruta de login principal - ACEPTA AMBOS CAMPOS: "pass" O "password"
 router.post('/', async (req, res) => {
   const supabase = req.app.get('supabase');
-  const { usuario, pass } = req.body;
+  
+  // ACEPTAR AMBOS CAMPOS PARA COMPATIBILIDAD
+  const { usuario } = req.body;
+  const pass = req.body.pass || req.body.password; // <-- CLAVE: Acepta ambos
 
-  console.log('🔐 Login attempt:', usuario);
+  console.log('🔐 Login attempt:', usuario, 'Campo usado:', req.body.pass ? 'pass' : 'password');
 
   if (!usuario || !pass) {
     return res.status(400).json({
@@ -34,6 +37,7 @@ router.post('/', async (req, res) => {
     }
 
     if (!usuarios || usuarios.length === 0) {
+      console.log('❌ Usuario no encontrado:', usuario);
       return res.status(401).json({
         success: false,
         error: 'Usuario o contraseña incorrectos'
@@ -42,43 +46,36 @@ router.post('/', async (req, res) => {
 
     const usuarioEncontrado = usuarios[0];
 
-    // DEBUG IMPORTANTE
+    // DEBUG: Mostrar información del usuario
     console.log('✅ Usuario encontrado en DB:', {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
       rol: usuarioEncontrado.rol || 'NO TIENE ROL EN DB',
-      polideportivo_id: usuarioEncontrado.polideportivo_id || 'NO TIENE POLI_ID EN DB',
-      tieneRol: !!usuarioEncontrado.rol,
-      tienePolideportivo: !!usuarioEncontrado.polideportivo_id
+      polideportivo_id: usuarioEncontrado.polideportivo_id || 'NO TIENE POLI_ID EN DB'
     });
 
-    // Verificar si la columna 'rol' existe y tiene valor
+    // Asegurar que el rol tenga valor
     if (!usuarioEncontrado.rol) {
-      console.error('❌ CRÍTICO: Usuario no tiene rol en la base de datos');
-      // Asignar rol por defecto
       usuarioEncontrado.rol = 'usuario';
     }
 
-    // Verificar si es admin_poli pero no tiene polideportivo
-    if (usuarioEncontrado.rol === 'admin_poli' && !usuarioEncontrado.polideportivo_id) {
-      console.warn('⚠️ ADVERTENCIA: admin_poli sin polideportivo asignado');
-    }
-
     // Comparar contraseña
+    console.log('🔐 Comparando contraseña...');
     const coincide = await bcrypt.compare(pass, usuarioEncontrado.pass);
 
     if (!coincide) {
+      console.log('❌ Contraseña incorrecta para:', usuario);
       return res.status(401).json({
         success: false,
         error: 'Usuario o contraseña incorrectos'
       });
     }
 
-    // Datos para el token JWT - Asegurar todos los campos
+    // Datos para el token JWT
     const payload = {
       id: usuarioEncontrado.id,
       usuario: usuarioEncontrado.usuario,
-      rol: usuarioEncontrado.rol || 'usuario', // Asegurar que siempre tenga rol
+      rol: usuarioEncontrado.rol,
       nombre: usuarioEncontrado.nombre,
       correo: usuarioEncontrado.correo,
       dni: usuarioEncontrado.dni,
@@ -86,16 +83,13 @@ router.post('/', async (req, res) => {
       polideportivo_id: usuarioEncontrado.polideportivo_id || null
     };
 
-    // DEBUG: Ver payload del token
-    console.log('📝 Payload del token:', payload);
-
     // Generar el token JWT
     const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
     const token = jwt.sign(payload, JWT_SECRET, {
       expiresIn: '24h'
     });
 
-    // Respuesta exitosa - CON DATOS COMPLETOS Y VERIFICADOS
+    // Respuesta exitosa
     const responseData = {
       success: true,
       message: 'Inicio de sesión exitoso',
@@ -106,23 +100,15 @@ router.post('/', async (req, res) => {
         usuario: usuarioEncontrado.usuario,
         dni: usuarioEncontrado.dni,
         correo: usuarioEncontrado.correo,
-        rol: usuarioEncontrado.rol || 'usuario', // ← AQUÍ ES CLAVE
+        rol: usuarioEncontrado.rol,
         telefono: usuarioEncontrado.telefono,
         polideportivo_id: usuarioEncontrado.polideportivo_id || null,
         fecha_creacion: usuarioEncontrado.fecha_creacion
-      },
-      expiresIn: 24 * 60 * 60
+      }
     };
 
-    // DEBUG: Ver respuesta final
-    console.log('✅ Login exitoso - Datos enviados al frontend:', {
-      usuario: responseData.user.usuario,
-      rol: responseData.user.rol,
-      polideportivo_id: responseData.user.polideportivo_id,
-      tieneRol: !!responseData.user.rol,
-      tienePolideportivo: !!responseData.user.polideportivo_id
-    });
-
+    console.log('✅ Login exitoso para:', usuarioEncontrado.usuario);
+    
     return res.status(200).json(responseData);
 
   } catch (error) {
