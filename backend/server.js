@@ -101,7 +101,7 @@ app.use((req, res, next) => {
   
   // Permitir origen si está en la lista
   if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader( origin);
+    res.setHeader('Access-Control-Allow-Origin', origin);
   }
   
   // Headers CORS esenciales
