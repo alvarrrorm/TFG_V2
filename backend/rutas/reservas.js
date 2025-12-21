@@ -536,7 +536,8 @@ router.post('/', authenticateToken, async (req, res) => {
         hora_fin: hora_fin,
         precio: precioFinal,
         estado: estado,
-        email_usuario: usuarioEmail
+        email_usuario: usuarioEmail,
+        ludoteca: ludoteca // ✅ Ahora la columna existe
       }])
       .select(`
         *,
@@ -571,6 +572,7 @@ router.post('/', authenticateToken, async (req, res) => {
     console.log('   ID Usuario:', nuevaReserva.usuario_id);
     console.log('   Nombre Usuario:', nuevaReserva.nombre_usuario);
     console.log('   Email guardado:', usuarioEmail || 'NO TIENE');
+    console.log('   Ludoteca:', ludoteca);
 
     res.status(201).json({ 
       success: true, 
@@ -650,7 +652,8 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
     console.log('✅ Reserva encontrada y verificada:', {
       id: reservaActual.id,
       estado: reservaActual.estado,
-      usuario_id: reservaActual.usuario_id
+      usuario_id: reservaActual.usuario_id,
+      ludoteca_actual: reservaActual.ludoteca
     });
 
     // 3. Validar datos recibidos
@@ -761,13 +764,13 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       hora_inicio: horaInicio,
       hora_fin: horaFin,
       precio: precioFinal,
-      ludoteca: ludoteca,
+      ludoteca: ludoteca, // ✅ Ahora la columna existe
       fecha_modificacion: new Date().toISOString()
     };
 
     console.log('🔄 Campos a actualizar:', updateData);
 
-    // 8. Actualizar reserva
+    // 8. Actualizar reserva con manejo de errores detallado
     const { data: reservaActualizada, error: updateError } = await supabase
       .from('reservas')
       .update(updateData)
@@ -781,17 +784,32 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
 
     if (updateError) {
       console.error('❌ Error al actualizar reserva:', updateError);
+      console.error('🔍 Detalles del error:', {
+        message: updateError.message,
+        details: updateError.details,
+        hint: updateError.hint,
+        code: updateError.code
+      });
+      
       return res.status(500).json({ 
         success: false, 
-        error: 'Error al actualizar reserva en la base de datos' 
+        error: 'Error al actualizar reserva en la base de datos: ' + updateError.message 
       });
     }
 
     console.log('✅ Reserva actualizada en BD. ID:', reservaActualizada.id);
+    console.log('📊 Datos actualizados:', {
+      pista_id: reservaActualizada.pista_id,
+      fecha: reservaActualizada.fecha,
+      hora_inicio: reservaActualizada.hora_inicio,
+      hora_fin: reservaActualizada.hora_fin,
+      precio: reservaActualizada.precio,
+      ludoteca: reservaActualizada.ludoteca
+    });
 
     const reservaConLudoteca = {
       ...reservaActualizada,
-      ludoteca: ludoteca,
+      ludoteca: reservaActualizada.ludoteca || ludoteca,
       pistaNombre: reservaActualizada.pistas?.nombre,
       pistaTipo: reservaActualizada.pistas?.tipo,
       polideportivo_nombre: reservaActualizada.polideportivos?.nombre
@@ -805,14 +823,17 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       message: 'Reserva modificada correctamente',
       precioAnterior: reservaActual.precio,
       precioNuevo: precioFinal,
-      cambioPrecio: precioFinal !== reservaActual.precio
+      cambioPrecio: precioFinal !== reservaActual.precio,
+      ludotecaAnterior: reservaActual.ludoteca,
+      ludotecaNuevo: ludoteca
     });
 
   } catch (error) {
     console.error('❌ Error al modificar reserva:', error);
+    console.error('🔍 Stack trace:', error.stack);
     return res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor' 
+      error: 'Error interno del servidor: ' + error.message 
     });
   }
 });
@@ -864,7 +885,7 @@ router.get('/mis-reservas', authenticateToken, async (req, res) => {
     
     const reservasConLudoteca = (reservas || []).map(reserva => ({
       ...reserva,
-      ludoteca: false,
+      ludoteca: reserva.ludoteca || false,
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
       polideportivo_nombre: reserva.polideportivos?.nombre
@@ -941,7 +962,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     const reservaConLudoteca = {
       ...reserva,
-      ludoteca: false,
+      ludoteca: reserva.ludoteca || false,
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
       polideportivo_nombre: reserva.polideportivos?.nombre
@@ -1043,7 +1064,7 @@ router.get('/admin-poli/reservas', authenticateToken, async (req, res) => {
       
       return {
         ...reserva,
-        ludoteca: false,
+        ludoteca: reserva.ludoteca || false,
         pistaNombre: reserva.pistas?.nombre,
         pistaTipo: reserva.pistas?.tipo,
         polideportivo_nombre: reserva.polideportivos?.nombre,
@@ -1157,7 +1178,7 @@ router.get('/', authenticateToken, async (req, res) => {
       
       return {
         ...reserva,
-        ludoteca: false,
+        ludoteca: reserva.ludoteca || false,
         pistaNombre: reserva.pistas?.nombre,
         pistaTipo: reserva.pistas?.tipo,
         polideportivo_nombre: reserva.polideportivos?.nombre,
@@ -1339,7 +1360,7 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
 
     const reservaConLudoteca = {
       ...reservaActualizada,
-      ludoteca: false,
+      ludoteca: reservaActualizada.ludoteca || false,
       pistaNombre: reservaActualizada.pistas?.nombre,
       polideportivo_nombre: reservaActualizada.polideportivos?.nombre
     };
@@ -1515,7 +1536,7 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
 
     const reservaConLudoteca = {
       ...reservaActualizada,
-      ludoteca: false,
+      ludoteca: reservaActualizada.ludoteca || false,
       pistaNombre: reservaActualizada.pistas?.nombre,
       polideportivo_nombre: reservaActualizada.polideportivos?.nombre
     };
@@ -1603,7 +1624,7 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
     
     const reservaConLudoteca = {
       ...reserva,
-      ludoteca: false,
+      ludoteca: reserva.ludoteca || false,
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
       polideportivo_nombre: reserva.polideportivos?.nombre
@@ -1788,7 +1809,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     
     const reservaConLudoteca = {
       ...reserva,
-      ludoteca: false,
+      ludoteca: reserva.ludoteca || false,
       pistaNombre: reserva.pistas?.nombre,
       polideportivo_nombre: reserva.polideportivos?.nombre
     };
@@ -1944,6 +1965,11 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
     if (estado !== undefined) updateData.estado = estado;
     if (nuevoPolideportivoId !== null) updateData.polideportivo_id = nuevoPolideportivoId;
+    
+    // ✅ Agregar ludoteca si existe en el body
+    if (ludoteca !== undefined) {
+      updateData.ludoteca = ludoteca;
+    }
 
     if (Object.keys(updateData).length === 0) {
       console.log('❌ No hay campos para actualizar');
@@ -1972,7 +1998,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 
     const reservaConLudoteca = {
       ...reservaActualizada,
-      ludoteca: ludoteca,
+      ludoteca: reservaActualizada.ludoteca || ludoteca,
       pistaNombre: reservaActualizada.pistas?.nombre,
       pistaTipo: reservaActualizada.pistas?.tipo,
       polideportivo_nombre: reservaActualizada.polideportivos?.nombre
