@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Ruta de login
+// Ruta de login (tradicional)
 router.post('/', async (req, res) => {
   const supabase = req.app.get('supabase');
   const { usuario, pass } = req.body;
