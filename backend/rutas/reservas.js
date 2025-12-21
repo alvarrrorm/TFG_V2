@@ -587,6 +587,236 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
+// 👇 RUTA ESPECÍFICA: USUARIOS PUEDEN MODIFICAR SUS PROPIAS RESERVAS PENDIENTES
+router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const { id } = req.params;
+  const {
+    pista_id,
+    fecha,
+    hora_inicio,
+    hora_fin,
+    ludoteca = false
+  } = req.body;
+
+  console.log('👤 Usuario editando su reserva ID:', id, 'Usuario:', req.user?.id);
+  console.log('📝 Datos de modificación:', {
+    pista_id, fecha, hora_inicio, hora_fin, ludoteca
+  });
+
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'Usuario no autenticado' 
+    });
+  }
+
+  if (!id || isNaN(parseInt(id))) {
+    return res.status(400).json({ success: false, error: 'ID de reserva inválido' });
+  }
+
+  const reservaId = parseInt(id);
+
+  try {
+    // 1. Verificar que la reserva existe y pertenece al usuario
+    const { data: reservaActual, error: getError } = await supabase
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo, precio, disponible),
+        polideportivos!inner(nombre)
+      `)
+      .eq('id', reservaId)
+      .eq('usuario_id', req.user.id)
+      .single();
+
+    if (getError || !reservaActual) {
+      console.error('❌ Reserva no encontrada o no pertenece al usuario:', getError);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada o no tienes permisos para modificarla' 
+      });
+    }
+
+    // 2. Verificar que la reserva está en estado 'pendiente'
+    if (reservaActual.estado !== 'pendiente') {
+      console.log('❌ Reserva no está pendiente, estado actual:', reservaActual.estado);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Solo se pueden modificar reservas pendientes' 
+      });
+    }
+
+    console.log('✅ Reserva encontrada y verificada:', {
+      id: reservaActual.id,
+      estado: reservaActual.estado,
+      usuario_id: reservaActual.usuario_id
+    });
+
+    // 3. Validar datos recibidos
+    const pistaId = pista_id || reservaActual.pista_id;
+    const fechaReserva = fecha ? formatearFecha(fecha) : reservaActual.fecha;
+    const horaInicio = hora_inicio || reservaActual.hora_inicio;
+    const horaFin = hora_fin || reservaActual.hora_fin;
+
+    if (!fechaReserva) {
+      return res.status(400).json({ success: false, error: 'Fecha inválida' });
+    }
+
+    if (hora_inicio && !validarHora(hora_inicio)) {
+      return res.status(400).json({ success: false, error: 'Formato de hora de inicio inválido' });
+    }
+
+    if (hora_fin && !validarHora(hora_fin)) {
+      return res.status(400).json({ success: false, error: 'Formato de hora de fin inválido' });
+    }
+
+    // 4. Verificar disponibilidad (excluyendo la reserva actual)
+    console.log('🔍 Verificando disponibilidad con:', {
+      pistaId, fechaReserva, horaInicio, horaFin, reservaId
+    });
+
+    const { data: reservasConflictivas, error: disponibilidadError } = await supabase
+      .from('reservas')
+      .select('id')
+      .eq('pista_id', pistaId)
+      .eq('fecha', fechaReserva)
+      .neq('id', reservaId)
+      .neq('estado', 'cancelada')
+      .or(`and(hora_inicio.lt.${horaFin},hora_fin.gt.${horaInicio}),and(hora_inicio.gte.${horaInicio},hora_inicio.lt.${horaFin}),and(hora_fin.gt.${horaInicio},hora_fin.lte.${horaFin})`);
+
+    if (disponibilidadError) {
+      console.error('❌ Error al comprobar disponibilidad:', disponibilidadError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al comprobar disponibilidad' 
+      });
+    }
+    
+    if (reservasConflictivas && reservasConflictivas.length > 0) {
+      console.log('🚫 Conflicto de disponibilidad encontrado:', reservasConflictivas.length);
+      return res.status(409).json({ 
+        success: false, 
+        error: 'La pista no está disponible en el horario seleccionado' 
+      });
+    }
+
+    console.log('✅ Disponibilidad verificada - Sin conflictos');
+
+    // 5. Obtener datos de la nueva pista si cambió
+    let nuevoPolideportivoId = reservaActual.polideportivo_id;
+    let precioHora = reservaActual.pistas?.precio || 0;
+
+    if (pista_id && pista_id !== reservaActual.pista_id) {
+      console.log('🔄 Cambiando pista, obteniendo nueva información');
+      const { data: pista, error: pistaError } = await supabase
+        .from('pistas')
+        .select('polideportivo_id, precio, disponible, nombre')
+        .eq('id', pista_id)
+        .single();
+
+      if (pistaError || !pista) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Pista no encontrada' 
+        });
+      }
+
+      if (pista.disponible === false) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'La pista seleccionada no está disponible (puede estar en mantenimiento)' 
+        });
+      }
+
+      nuevoPolideportivoId = pista.polideportivo_id;
+      precioHora = pista.precio;
+      console.log('📍 Nueva pista seleccionada:', pista.nombre, 'Precio/hora:', precioHora);
+    }
+
+    // 6. Calcular nuevo precio
+    const [hInicio, mInicio] = horaInicio.split(':').map(Number);
+    const [hFin, mFin] = horaFin.split(':').map(Number);
+    const duracion = ((hFin * 60 + mFin) - (hInicio * 60 + mInicio)) / 60;
+    
+    if (duracion <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'La hora de fin debe ser posterior a la hora de inicio' 
+      });
+    }
+
+    let precioFinal = parseFloat((precioHora * duracion).toFixed(2));
+    if (ludoteca) {
+      precioFinal += 5;
+    }
+
+    console.log('💰 Precio calculado:', precioFinal, '(anterior:', reservaActual.precio, ')');
+
+    // 7. Preparar datos de actualización
+    const updateData = {
+      pista_id: pistaId,
+      polideportivo_id: nuevoPolideportivoId,
+      fecha: fechaReserva,
+      hora_inicio: horaInicio,
+      hora_fin: horaFin,
+      precio: precioFinal,
+      ludoteca: ludoteca,
+      fecha_modificacion: new Date().toISOString()
+    };
+
+    console.log('🔄 Campos a actualizar:', updateData);
+
+    // 8. Actualizar reserva
+    const { data: reservaActualizada, error: updateError } = await supabase
+      .from('reservas')
+      .update(updateData)
+      .eq('id', reservaId)
+      .select(`
+        *,
+        pistas!inner(nombre, tipo),
+        polideportivos!inner(nombre)
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('❌ Error al actualizar reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar reserva en la base de datos' 
+      });
+    }
+
+    console.log('✅ Reserva actualizada en BD. ID:', reservaActualizada.id);
+
+    const reservaConLudoteca = {
+      ...reservaActualizada,
+      ludoteca: ludoteca,
+      pistaNombre: reservaActualizada.pistas?.nombre,
+      pistaTipo: reservaActualizada.pistas?.tipo,
+      polideportivo_nombre: reservaActualizada.polideportivos?.nombre
+    };
+
+    console.log('🎉 Reserva modificada correctamente por usuario');
+    
+    res.json({ 
+      success: true, 
+      data: reservaConLudoteca, 
+      message: 'Reserva modificada correctamente',
+      precioAnterior: reservaActual.precio,
+      precioNuevo: precioFinal,
+      cambioPrecio: precioFinal !== reservaActual.precio
+    });
+
+  } catch (error) {
+    console.error('❌ Error al modificar reserva:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
 // 👇 RUTA MIS RESERVAS - CORREGIDA Y SIMPLIFICADA
 // TODOS los usuarios autenticados pueden ver SUS PROPIAS reservas
 router.get('/mis-reservas', authenticateToken, async (req, res) => {
