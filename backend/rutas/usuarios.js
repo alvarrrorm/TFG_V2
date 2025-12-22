@@ -111,7 +111,11 @@ const middlewarePolideportivo = [
   filtrarPorPolideportivo
 ];
 
-// Ruta 1: Obtener todos los usuarios (solo super_admin)
+// ============================================
+// RUTAS PRINCIPALES
+// ============================================
+
+// Ruta 1: Obtener todos los usuarios (solo super_admin) ✅ CORREGIDA
 router.get('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
   try {
     const supabase = req.app.get('supabase');
@@ -126,7 +130,13 @@ router.get('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, re
       `)
       .order('fecha_creacion', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error en GET /api/usuarios:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener usuarios' 
+      });
+    }
 
     res.json({ 
       success: true, 
@@ -156,7 +166,13 @@ router.get('/con-poli', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async 
       `)
       .order('fecha_creacion', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error en GET /api/usuarios/con-poli:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener usuarios' 
+      });
+    }
 
     res.json({ 
       success: true, 
@@ -204,7 +220,13 @@ router.get('/polideportivo/:id?',
           `)
           .order('nombre');
           
-        if (error) throw error;
+        if (error) {
+          console.error('Error al obtener usuarios:', error);
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Error al obtener usuarios' 
+          });
+        }
         return res.json({ success: true, data: usuarios });
       }
       
@@ -220,7 +242,13 @@ router.get('/polideportivo/:id?',
         .eq('polideportivo_id', polideportivoId)
         .order('nombre');
       
-      if (error) throw error;
+      if (error) {
+        console.error('Error al obtener usuarios del polideportivo:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Error al obtener usuarios' 
+        });
+      }
 
       res.json({ 
         success: true, 
@@ -380,7 +408,10 @@ router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]),
 
     if (updateError) {
       console.error('Error actualizando usuario:', updateError);
-      throw updateError;
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar usuario' 
+      });
     }
 
     // 7. Registrar acción
@@ -412,7 +443,6 @@ router.get('/polideportivos/disponibles',
     try {
       const supabase = req.app.get('supabase');
       
-      // Obtener polideportivos que no tienen admin asignado
       const { data: polideportivos, error } = await supabase
         .from('polideportivos')
         .select(`
@@ -420,7 +450,13 @@ router.get('/polideportivos/disponibles',
         `)
         .order('nombre');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error al obtener polideportivos:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Error al obtener polideportivos' 
+        });
+      }
 
       res.json({ 
         success: true, 
@@ -453,7 +489,13 @@ router.get('/mi-perfil',
         .eq('id', req.user.id)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error al obtener perfil:', error);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Error al obtener perfil' 
+        });
+      }
 
       res.json({ 
         success: true, 
@@ -529,7 +571,25 @@ router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, r
       `)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error al crear usuario:', error);
+      
+      // Manejar errores de duplicados
+      if (error.code === '23505') {
+        const field = error.message.includes('dni') ? 'DNI' : 
+                     error.message.includes('correo') ? 'correo' : 
+                     error.message.includes('usuario') ? 'usuario' : 'campo único';
+        return res.status(400).json({ 
+          success: false, 
+          error: `El ${field} ya está registrado` 
+        });
+      }
+
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al crear usuario' 
+      });
+    }
 
     res.status(201).json({ 
       success: true, 
@@ -540,17 +600,6 @@ router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, r
   } catch (error) {
     console.error('Error en POST /api/usuarios:', error);
     
-    // Manejar errores de duplicados
-    if (error.code === '23505') {
-      const field = error.message.includes('dni') ? 'DNI' : 
-                   error.message.includes('correo') ? 'correo' : 
-                   error.message.includes('usuario') ? 'usuario' : 'campo único';
-      return res.status(400).json({ 
-        success: false, 
-        error: `El ${field} ya está registrado` 
-      });
-    }
-
     res.status(500).json({ 
       success: false, 
       error: 'Error al crear usuario: ' + error.message 
@@ -700,7 +749,10 @@ router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
 
     if (updateError) {
       console.error('Error actualizando usuario:', updateError);
-      throw updateError;
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al actualizar usuario' 
+      });
     }
 
     // 5. Registrar acción

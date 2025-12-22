@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
-// Importar middlewares y roles desde usuarios
-const { verificarRol, filtrarPorPolideportivo, ROLES, NIVELES_PERMISO } = require('./usuarios');
+// ✅ CORREGIDO: Importar correctamente desde usuarios
+const { verificarRol, ROLES, NIVELES_PERMISO } = require('./usuarios');
 
-// Middleware de autenticación
+// Middleware de autenticación (copia local para evitar problemas de importación)
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -32,6 +32,23 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Middleware para filtrar por polideportivo (versión local)
+const filtrarPorPolideportivo = async (req, res, next) => {
+  if (req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+    return next();
+  }
+
+  // Si es admin_poli, ya tiene el polideportivo_id en el token
+  if (!req.user.polideportivo_id) {
+    return res.status(403).json({ 
+      success: false,
+      error: 'No tienes un polideportivo asignado' 
+    });
+  }
+  
+  next();
+};
+
 // ============================================
 // RUTAS PÚBLICAS (sin autenticación)
 // ============================================
@@ -52,7 +69,6 @@ router.get('/', async (req, res) => {
       `)
       .order('id');
 
-    // Aplicar filtros si existen
     if (polideportivo_id) {
       query = query.eq('polideportivo_id', polideportivo_id);
     }
@@ -119,7 +135,6 @@ router.get('/disponibles', async (req, res) => {
       .order('tipo')
       .order('nombre');
 
-    // Aplicar filtros si existen
     if (polideportivo_id) {
       query = query.eq('polideportivo_id', polideportivo_id);
     }
@@ -225,7 +240,7 @@ router.get('/:id', async (req, res) => {
 // RUTAS PARA USUARIOS AUTENTICADOS
 // ============================================
 
-// Agregar nueva pista (super_admin puede crear en cualquier polideportivo, admin_poli solo en el suyo)
+// Agregar nueva pista
 router.post('/', 
   authenticateToken,
   async (req, res) => {
@@ -263,7 +278,6 @@ router.post('/',
     let polideportivoIdFinal;
 
     if (user.rol === ROLES.SUPER_ADMIN) {
-      // Super_admin puede especificar cualquier polideportivo
       if (!polideportivo_id) {
         return res.status(400).json({ 
           success: false,
@@ -272,7 +286,6 @@ router.post('/',
       }
       polideportivoIdFinal = polideportivo_id;
     } else if (user.rol === ROLES.ADMIN_POLIDEPORTIVO) {
-      // Admin_poli solo puede crear pistas en su propio polideportivo
       if (!user.polideportivo_id) {
         return res.status(403).json({ 
           success: false,
@@ -281,12 +294,10 @@ router.post('/',
       }
       polideportivoIdFinal = user.polideportivo_id;
       
-      // Si intenta especificar otro polideportivo, lo ignoramos y usamos el suyo
       if (polideportivo_id && polideportivo_id !== user.polideportivo_id) {
         console.warn(`⚠️ Admin_poli ${user.id} intentó crear pista en polideportivo ${polideportivo_id}, pero se usará ${user.polideportivo_id}`);
       }
     } else {
-      // Otros roles no pueden crear pistas
       return res.status(403).json({ 
         success: false,
         error: 'No tienes permisos para crear pistas' 
@@ -341,7 +352,6 @@ router.post('/',
         disponible: true
       };
 
-      // Agregar descripción si se proporciona
       if (descripcion && descripcion.trim()) {
         nuevaPistaData.descripcion = descripcion.trim();
       }
@@ -400,7 +410,7 @@ router.post('/',
 
 // Obtener pistas de MI polideportivo (para admin_poli)
 router.get('/mi-polideportivo/pistas', 
-  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
+  authenticateToken,
   filtrarPorPolideportivo, 
   async (req, res) => {
     const supabase = req.app.get('supabase');
@@ -426,7 +436,6 @@ router.get('/mi-polideportivo/pistas',
         .order('tipo')
         .order('nombre');
 
-      // Aplicar filtros si existen
       if (tipo) {
         query = query.eq('tipo', tipo);
       }
@@ -475,24 +484,15 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN MEJORADA
-router.patch('/:id/mantenimiento', 
-  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN COMPATIBLE
+router.put('/:id/mantenimiento', 
+  authenticateToken,
   async (req, res) => {
     const { id } = req.params;
-    const { enMantenimiento } = req.body;
     const supabase = req.app.get('supabase');
     const user = req.user;
 
-    console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
-
-    // Verificar que el campo es booleano
-    if (typeof enMantenimiento !== 'boolean') {
-      return res.status(400).json({ 
-        success: false,
-        error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
-      });
-    }
+    console.log(`🛠️ Cambiando mantenimiento pista ${id}`, 'usuario:', user.rol);
 
     try {
       // Verificar que la pista existe
@@ -515,12 +515,11 @@ router.patch('/:id/mantenimiento',
         });
       }
 
-      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+      // ✅ LÓGICA MEJORADA: Invertir el estado actual
+      const nuevoDisponible = !pista.disponible;
+      const enMantenimiento = !nuevoDisponible;
 
-      // ✅ LÓGICA CORRECTA: 
-      // - Si enMantenimiento = true → poner en mantenimiento → disponible = false
-      // - Si enMantenimiento = false → quitar mantenimiento → disponible = true
-      const nuevoDisponible = !enMantenimiento;
+      console.log(`ℹ️ Pista ${id}: disponible actual = ${pista.disponible}, nuevo = ${nuevoDisponible}, enMantenimiento = ${enMantenimiento}`);
 
       const updateData = { 
         disponible: nuevoDisponible,
@@ -565,6 +564,7 @@ router.patch('/:id/mantenimiento',
       res.json({
         success: true,
         data: respuesta,
+        enMantenimiento: enMantenimiento,
         message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
       });
 
@@ -579,7 +579,7 @@ router.patch('/:id/mantenimiento',
 
 // ✅ CORREGIDO: Actualizar precio de pista
 router.patch('/:id/precio', 
-  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
+  authenticateToken,
   async (req, res) => {
     const { id } = req.params;
     const { precio } = req.body;
@@ -684,13 +684,9 @@ router.patch('/:id/precio',
     }
 });
 
-// ============================================
-// RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
-// ============================================
-
 // ✅ CORREGIDO: Actualizar pista completa
 router.put('/:id', 
-  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
+  authenticateToken,
   async (req, res) => {
     const { id } = req.params;
     const { nombre, tipo, precio, descripcion } = req.body;
@@ -841,12 +837,21 @@ router.put('/:id',
     }
 });
 
-// ✅ CORREGIDO: Eliminar pista (solo super_admin) - CON MEJOR MANEJO DE ERRORES
+// ✅ CORREGIDO: Eliminar pista (solo super_admin)
 router.delete('/:id', 
-  verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
+  authenticateToken,
   async (req, res) => {
     const { id } = req.params;
     const supabase = req.app.get('supabase');
+    const user = req.user;
+
+    // Solo super_admin puede eliminar
+    if (user.rol !== ROLES.SUPER_ADMIN) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Solo el super administrador puede eliminar pistas' 
+      });
+    }
 
     console.log(`🗑️ Super_admin eliminando pista ID: ${id}`);
 
@@ -865,46 +870,7 @@ router.delete('/:id',
         });
       }
 
-      // Verificar si hay reservas asociadas a esta pista (cualquier estado excepto cancelada)
-      const { data: reservas, error: reservasError } = await supabase
-        .from('reservas')
-        .select('id, estado, fecha, hora_inicio, nombre_usuario')
-        .eq('pista_id', id)
-        .neq('estado', 'cancelada');
-
-      if (reservasError) {
-        console.error('Error al verificar reservas:', reservasError);
-        // No retornamos error, solo log
-      }
-
-      if (reservas && reservas.length > 0) {
-        // Información detallada de las reservas activas
-        const reservasInfo = reservas.map(r => 
-          `- Reserva #${r.id}: ${r.nombre_usuario} (${r.fecha} ${r.hora_inicio}) - Estado: ${r.estado}`
-        ).join('\n');
-        
-        return res.status(409).json({ 
-          success: false,
-          error: `No se puede eliminar la pista porque tiene ${reservas.length} reserva(s) activa(s).\n\nReservas activas:\n${reservasInfo}`,
-          detalles: {
-            total_reservas: reservas.length,
-            reservas: reservas
-          }
-        });
-      }
-
-      // Verificar si hay reservas canceladas (para información)
-      const { data: reservasCanceladas, error: canceladasError } = await supabase
-        .from('reservas')
-        .select('id')
-        .eq('pista_id', id)
-        .eq('estado', 'cancelada');
-
-      if (!canceladasError && reservasCanceladas && reservasCanceladas.length > 0) {
-        console.log(`ℹ️ La pista tiene ${reservasCanceladas.length} reserva(s) cancelada(s) que también serán eliminadas`);
-      }
-
-      // Eliminar pista (las reservas asociadas se eliminarán por CASCADE si está configurado)
+      // Eliminar pista
       const { error: deleteError } = await supabase
         .from('pistas')
         .delete()
@@ -925,8 +891,7 @@ router.delete('/:id',
         message: 'Pista eliminada correctamente',
         data: { 
           id, 
-          nombre: pista.nombre,
-          reservas_activas_previas: reservas?.length || 0
+          nombre: pista.nombre
         }
       });
 
