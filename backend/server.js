@@ -227,7 +227,7 @@ app.set('NIVELES_PERMISO', NIVELES_PERMISO);
 app.use('/api/reservas', reservasRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
-app.use('/api/usuarios', usuariosRouter.router); 
+app.use('/api/usuarios', usuariosRouter.router); // <-- Aquí está el cambio
 app.use('/api', loginRouter);
 
 
