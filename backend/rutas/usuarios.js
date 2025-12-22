@@ -273,7 +273,7 @@ router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]),
       // Verificar que el polideportivo existe
       const { data: poliExistente, error: poliError } = await supabase
         .from('polideportivos')
-        .select('id')
+        .select('id, nombre')
         .eq('id', polideportivo_id)
         .single();
         
@@ -283,12 +283,28 @@ router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]),
           error: 'Polideportivo no encontrado' 
         });
       }
+      
+      // Verificar si ya hay otro admin para este polideportivo
+      const { data: adminExistente, error: adminCheckError } = await supabase
+        .from('usuarios')
+        .select('id, usuario, nombre')
+        .eq('rol', ROLES.ADMIN_POLIDEPORTIVO)
+        .eq('polideportivo_id', polideportivo_id)
+        .neq('id', id)
+        .single();
+      
+      if (adminExistente) {
+        return res.status(409).json({
+          success: false,
+          error: `Ya existe un administrador (${adminExistente.nombre}) para este polideportivo. Primero quita sus privilegios.`
+        });
+      }
     }
 
     // 1. Verificar contraseña del super admin
     const { data: adminData, error: adminError } = await supabase
       .from('usuarios')
-      .select('pass')
+      .select('pass, usuario')
       .eq('id', adminId)
       .single();
 
@@ -310,7 +326,7 @@ router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]),
     // 2. Verificar que el usuario existe
     const { data: usuarioExistente, error: usuarioError } = await supabase
       .from('usuarios')
-      .select('id, rol')
+      .select('id, rol, nombre, usuario')
       .eq('id', id)
       .single();
 
@@ -362,10 +378,17 @@ router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]),
       `)
       .single();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      console.error('Error actualizando usuario:', updateError);
+      throw updateError;
+    }
 
     // 7. Registrar acción
-    console.log(`✅ Usuario ${id} cambiado a rol ${nuevoRol} por super_admin ${adminId}`);
+    console.log(`✅ CAMBIO DE ROL: Usuario ${usuarioExistente.nombre} (ID: ${id}) cambiado a rol ${nuevoRol} por super_admin ${adminData.usuario} (ID: ${adminId})`, {
+      nuevoRol,
+      polideportivo_id: nuevoRol === ROLES.ADMIN_POLIDEPORTIVO ? polideportivo_id : null,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({ 
       success: true,
@@ -561,7 +584,7 @@ router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
     // 1. Verificar contraseña del super admin
     const { data: adminData, error: adminError } = await supabase
       .from('usuarios')
-      .select('pass')
+      .select('pass, usuario')
       .eq('id', adminId)
       .single();
 
@@ -583,7 +606,7 @@ router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
     // 2. Verificar que el usuario existe
     const { data: usuarioExistente, error: usuarioError } = await supabase
       .from('usuarios')
-      .select('id, rol')
+      .select('id, rol, nombre, usuario')
       .eq('id', id)
       .single();
 
@@ -618,6 +641,22 @@ router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
         return res.status(404).json({ 
           success: false, 
           error: 'Polideportivo no encontrado' 
+        });
+      }
+
+      // Verificar si ya hay otro admin para este polideportivo
+      const { data: adminExistente, error: adminCheckError } = await supabase
+        .from('usuarios')
+        .select('id, usuario, nombre')
+        .eq('rol', ROLES.ADMIN_POLIDEPORTIVO)
+        .eq('polideportivo_id', polideportivo_id)
+        .neq('id', id)
+        .single();
+      
+      if (adminExistente) {
+        return res.status(409).json({
+          success: false,
+          error: `Ya existe un administrador (${adminExistente.nombre}) para este polideportivo. Primero quita sus privilegios.`
         });
       }
 
@@ -659,10 +698,18 @@ router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
       `)
       .single();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      console.error('Error actualizando usuario:', updateError);
+      throw updateError;
+    }
 
     // 5. Registrar acción
-    console.log(`✅ Usuario ${id} ${accion} admin_poli por super_admin ${adminId}`);
+    console.log(`✅ ADMIN POLI ${accion.toUpperCase()}: Usuario ${usuarioExistente.nombre} (ID: ${id}) ${accion} admin_poli por super_admin ${adminData.usuario} (ID: ${adminId})`, {
+      accion,
+      nuevoRol,
+      polideportivo_id: accion === 'asignar' ? polideportivo_id : null,
+      timestamp: new Date().toISOString()
+    });
 
     res.json({ 
       success: true,

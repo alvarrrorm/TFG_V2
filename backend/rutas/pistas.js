@@ -475,7 +475,7 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN MEJORADA
+// ✅ **CORRECCIÓN CRÍTICA: Endpoint de mantenimiento con lógica arreglada**
 router.patch('/:id/mantenimiento', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -486,16 +486,40 @@ router.patch('/:id/mantenimiento',
 
     console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
 
-    // Verificar que el campo es booleano
-    if (typeof enMantenimiento !== 'boolean') {
-      return res.status(400).json({ 
-        success: false,
-        error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
-      });
-    }
-
     try {
-      // Verificar que la pista existe
+      // 1. Validar que el parámetro existe y es booleano
+      if (enMantenimiento === undefined) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'El campo "enMantenimiento" es obligatorio y debe ser true/false' 
+        });
+      }
+
+      // Convertir a booleano si viene como string
+      let mantenimientoBool;
+      if (typeof enMantenimiento === 'string') {
+        if (enMantenimiento.toLowerCase() === 'true') {
+          mantenimientoBool = true;
+        } else if (enMantenimiento.toLowerCase() === 'false') {
+          mantenimientoBool = false;
+        } else {
+          return res.status(400).json({ 
+            success: false,
+            error: 'El campo "enMantenimiento" debe ser true o false' 
+          });
+        }
+      } else if (typeof enMantenimiento === 'boolean') {
+        mantenimientoBool = enMantenimiento;
+      } else {
+        return res.status(400).json({ 
+          success: false,
+          error: 'El campo "enMantenimiento" debe ser un valor booleano' 
+        });
+      }
+
+      console.log(`🔧 Parámetro procesado: ${mantenimientoBool} (tipo: ${typeof mantenimientoBool})`);
+
+      // 2. Verificar que la pista existe
       let query = supabase
         .from('pistas')
         .select('id, polideportivo_id, nombre, disponible')
@@ -509,25 +533,28 @@ router.patch('/:id/mantenimiento',
       const { data: pista, error: pistaError } = await query.single();
 
       if (pistaError || !pista) {
+        console.error('❌ Pista no encontrada o sin permisos:', pistaError);
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
         });
       }
 
-      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+      console.log(`ℹ️ Estado actual de la pista ${pista.nombre}: disponible = ${pista.disponible}`);
 
-      // ✅ LÓGICA CORRECTA: 
-      // - Si enMantenimiento = true → poner en mantenimiento → disponible = false
-      // - Si enMantenimiento = false → quitar mantenimiento → disponible = true
-      const nuevoDisponible = !enMantenimiento;
+      // ✅ **LÓGICA CORRECTA SIMPLIFICADA:**
+      // - Si enMantenimiento = true → poner en mantenimiento (disponible = false)
+      // - Si enMantenimiento = false → quitar mantenimiento (disponible = true)
+      const nuevoDisponible = !mantenimientoBool;
+
+      console.log(`🔄 Cambiando estado: ${pista.disponible} -> ${nuevoDisponible} (enMantenimiento: ${mantenimientoBool})`);
 
       const updateData = { 
         disponible: nuevoDisponible,
         updated_at: new Date().toISOString()
       };
 
-      // Actualizar estado en la base de datos
+      // 3. Actualizar estado en la base de datos
       const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update(updateData)
@@ -539,15 +566,16 @@ router.patch('/:id/mantenimiento',
         .single();
 
       if (updateError) {
-        console.error('Error al actualizar estado:', updateError);
+        console.error('❌ Error al actualizar estado:', updateError);
         return res.status(500).json({ 
           success: false,
           error: 'Error al actualizar estado de mantenimiento: ' + updateError.message 
         });
       }
 
-      console.log(`✅ Estado actualizado pista ${id}: disponible = ${pistaActualizada.disponible}`);
+      console.log(`✅ Estado actualizado pista ${id}: ${pistaActualizada.nombre} - disponible = ${pistaActualizada.disponible}`);
 
+      // 4. Formatear respuesta
       const respuesta = {
         id: pistaActualizada.id,
         nombre: pistaActualizada.nombre,
@@ -565,19 +593,19 @@ router.patch('/:id/mantenimiento',
       res.json({
         success: true,
         data: respuesta,
-        message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+        message: `Pista ${mantenimientoBool ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
       });
 
     } catch (error) {
-      console.error('Error al actualizar estado:', error);
+      console.error('❌ Error en endpoint de mantenimiento:', error);
       return res.status(500).json({ 
         success: false,
-        error: 'Error al actualizar estado de mantenimiento' 
+        error: 'Error interno del servidor al actualizar estado de mantenimiento' 
       });
     }
 });
 
-// ✅ CORREGIDO: Actualizar precio de pista
+// ✅ **MEJORADO: Actualizar precio de pista**
 router.patch('/:id/precio', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -688,7 +716,7 @@ router.patch('/:id/precio',
 // RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
 // ============================================
 
-// ✅ CORREGIDO: Actualizar pista completa
+// ✅ **MEJORADO: Actualizar pista completa**
 router.put('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
@@ -841,7 +869,7 @@ router.put('/:id',
     }
 });
 
-// ✅ CORREGIDO: Eliminar pista (solo super_admin) - CON MEJOR MANEJO DE ERRORES
+// ✅ **MEJORADO: Eliminar pista (solo super_admin)**
 router.delete('/:id', 
   verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
   async (req, res) => {
@@ -937,6 +965,65 @@ router.delete('/:id',
         error: 'Error al eliminar pista: ' + error.message 
       });
     }
+});
+
+// **NUEVA RUTA: Obtener tipos de pistas disponibles**
+router.get('/tipos/disponibles', async (req, res) => {
+  const supabase = req.app.get('supabase');
+  
+  try {
+    const { data: tipos, error } = await supabase
+      .from('pistas')
+      .select('tipo')
+      .eq('disponible', true)
+      .order('tipo');
+
+    if (error) {
+      console.error('Error al obtener tipos de pistas:', error);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al obtener tipos de pistas' 
+      });
+    }
+
+    // Extraer tipos únicos
+    const tiposUnicos = [...new Set((tipos || []).map(p => p.tipo))];
+
+    res.json({
+      success: true,
+      data: tiposUnicos
+    });
+  } catch (error) {
+    console.error('Error al obtener tipos de pistas:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener tipos de pistas' 
+    });
+  }
+});
+
+// **NUEVA RUTA: Health check para pistas**
+router.get('/health/check', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API de pistas funcionando correctamente',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      public: {
+        getAll: 'GET /api/pistas',
+        getAvailable: 'GET /api/pistas/disponibles',
+        getById: 'GET /api/pistas/:id',
+        getTypes: 'GET /api/pistas/tipos/disponibles'
+      },
+      protected: {
+        create: 'POST /api/pistas (authenticateToken)',
+        updateMaintenance: 'PATCH /api/pistas/:id/mantenimiento (admin_poli/super_admin)',
+        updatePrice: 'PATCH /api/pistas/:id/precio (admin_poli/super_admin)',
+        updateFull: 'PUT /api/pistas/:id (admin_poli/super_admin)',
+        delete: 'DELETE /api/pistas/:id (super_admin only)'
+      }
+    }
+  });
 });
 
 module.exports = router;
