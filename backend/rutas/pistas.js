@@ -309,17 +309,14 @@ router.post('/',
       }
 
       // Verificar si ya existe una pista con el mismo nombre en el mismo polideportivo
-      const { data: pistasExistentes, error: pistaError } = await supabase
+      const { data: pistaExistente, error: pistaError } = await supabase
         .from('pistas')
         .select('id')
         .eq('nombre', nombre.trim())
-        .eq('polideportivo_id', polideportivoIdFinal);
+        .eq('polideportivo_id', polideportivoIdFinal)
+        .single();
 
-      if (pistaError) {
-        console.error('Error verificando pistas existentes:', pistaError);
-      }
-
-      if (pistasExistentes && pistasExistentes.length > 0) {
+      if (pistaExistente) {
         return res.status(409).json({ 
           success: false,
           error: 'Ya existe una pista con ese nombre en este polideportivo' 
@@ -478,9 +475,9 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN MEJORADA
 router.patch('/:id/mantenimiento', 
-  authenticateToken,
+  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
     const { id } = req.params;
     const { enMantenimiento } = req.body;
@@ -509,27 +506,20 @@ router.patch('/:id/mantenimiento',
         query = query.eq('polideportivo_id', user.polideportivo_id);
       }
 
-      const { data: pista, error: pistaError } = await query;
+      const { data: pista, error: pistaError } = await query.single();
 
-      if (pistaError) {
-        console.error('Error al buscar pista:', pistaError);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al buscar la pista' 
-        });
-      }
-
-      if (!pista || pista.length === 0) {
+      if (pistaError || !pista) {
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
         });
       }
 
-      const pistaData = pista[0];
-      console.log(`ℹ️ Pista actual estado: disponible = ${pistaData.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
 
-      // Lógica: enMantenimiento=true → disponible=false, enMantenimiento=false → disponible=true
+      // ✅ LÓGICA CORRECTA: 
+      // - Si enMantenimiento = true → poner en mantenimiento → disponible = false
+      // - Si enMantenimiento = false → quitar mantenimiento → disponible = true
       const nuevoDisponible = !enMantenimiento;
 
       const updateData = { 
@@ -538,14 +528,15 @@ router.patch('/:id/mantenimiento',
       };
 
       // Actualizar estado en la base de datos
-      const { data: pistasActualizadas, error: updateError } = await supabase
+      const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update(updateData)
         .eq('id', id)
         .select(`
           *,
           polideportivos:polideportivo_id (nombre, direccion)
-        `);
+        `)
+        .single();
 
       if (updateError) {
         console.error('Error al actualizar estado:', updateError);
@@ -555,14 +546,6 @@ router.patch('/:id/mantenimiento',
         });
       }
 
-      if (!pistasActualizadas || pistasActualizadas.length === 0) {
-        return res.status(404).json({ 
-          success: false,
-          error: 'Pista no encontrada después de actualizar' 
-        });
-      }
-
-      const pistaActualizada = pistasActualizadas[0];
       console.log(`✅ Estado actualizado pista ${id}: disponible = ${pistaActualizada.disponible}`);
 
       const respuesta = {
@@ -589,14 +572,14 @@ router.patch('/:id/mantenimiento',
       console.error('Error al actualizar estado:', error);
       return res.status(500).json({ 
         success: false,
-        error: 'Error al actualizar estado de mantenimiento: ' + error.message 
+        error: 'Error al actualizar estado de mantenimiento' 
       });
     }
 });
 
-// Actualizar precio de pista
+// ✅ CORREGIDO: Actualizar precio de pista
 router.patch('/:id/precio', 
-  authenticateToken,
+  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
     const { id } = req.params;
     const { precio } = req.body;
@@ -639,27 +622,17 @@ router.patch('/:id/precio',
         query = query.eq('polideportivo_id', user.polideportivo_id);
       }
 
-      const { data: pista, error: pistaError } = await query;
+      const { data: pista, error: pistaError } = await query.single();
 
-      if (pistaError) {
-        console.error('Error al buscar pista:', pistaError);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al buscar la pista' 
-        });
-      }
-
-      if (!pista || pista.length === 0) {
+      if (pistaError || !pista) {
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
-        });
+      });
       }
 
-      const pistaData = pista[0];
-
       // Actualizar precio
-      const { data: pistasActualizadas, error: updateError } = await supabase
+      const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update({ 
           precio: precioNum,
@@ -669,7 +642,8 @@ router.patch('/:id/precio',
         .select(`
           *,
           polideportivos:polideportivo_id (nombre, direccion)
-        `);
+        `)
+        .single();
 
       if (updateError) {
         console.error('Error al actualizar precio:', updateError);
@@ -679,15 +653,7 @@ router.patch('/:id/precio',
         });
       }
 
-      if (!pistasActualizadas || pistasActualizadas.length === 0) {
-        return res.status(404).json({ 
-          success: false,
-          error: 'Pista no encontrada después de actualizar' 
-        });
-      }
-
-      const pistaActualizada = pistasActualizadas[0];
-      console.log(`✅ Precio actualizado pista ${id}: ${pistaData.nombre} - $${precioNum.toFixed(2)}`);
+      console.log(`✅ Precio actualizado pista ${id}: ${pista.nombre} - $${precioNum.toFixed(2)}`);
 
       const respuesta = {
         id: pistaActualizada.id,
@@ -713,14 +679,18 @@ router.patch('/:id/precio',
       console.error('Error al actualizar precio:', error);
       return res.status(500).json({ 
         success: false,
-        error: 'Error al actualizar precio: ' + error.message 
+        error: 'Error al actualizar precio' 
       });
     }
 });
 
-// Actualizar pista completa
+// ============================================
+// RUTAS PARA SUPER_ADMIN Y ADMIN_POLI (edición completa)
+// ============================================
+
+// ✅ CORREGIDO: Actualizar pista completa
 router.put('/:id', 
-  authenticateToken,
+  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
   async (req, res) => {
     const { id } = req.params;
     const { nombre, tipo, precio, descripcion } = req.body;
@@ -748,24 +718,15 @@ router.put('/:id',
         query = query.eq('polideportivo_id', user.polideportivo_id);
       }
 
-      const { data: pistasExistentes, error: pistaError } = await query;
+      const { data: pistaExistente, error: pistaError } = await query.single();
 
-      if (pistaError) {
+      if (pistaError || !pistaExistente) {
         console.error('Error al buscar pista:', pistaError);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al buscar la pista' 
-        });
-      }
-
-      if (!pistasExistentes || pistasExistentes.length === 0) {
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada o no tienes permisos para modificarla' 
         });
       }
-
-      const pistaExistente = pistasExistentes[0];
 
       // Preparar datos para actualizar
       const updateData = {};
@@ -814,18 +775,15 @@ router.put('/:id',
       if (nombre !== undefined && nombre.trim() !== pistaExistente.nombre) {
         const polideportivoId = user.rol === ROLES.SUPER_ADMIN ? pistaExistente.polideportivo_id : user.polideportivo_id;
         
-        const { data: pistasConMismoNombre, error: nombreError } = await supabase
+        const { data: pistaConMismoNombre, error: nombreError } = await supabase
           .from('pistas')
           .select('id')
           .eq('nombre', nombre.trim())
           .eq('polideportivo_id', polideportivoId)
-          .neq('id', id);
+          .neq('id', id)
+          .single();
 
-        if (nombreError) {
-          console.error('Error verificando nombre duplicado:', nombreError);
-        }
-
-        if (pistasConMismoNombre && pistasConMismoNombre.length > 0) {
+        if (pistaConMismoNombre) {
           return res.status(409).json({ 
             success: false,
             error: 'Ya existe una pista con ese nombre en este polideportivo' 
@@ -834,14 +792,15 @@ router.put('/:id',
       }
 
       // Realizar actualización
-      const { data: pistasActualizadas, error: updateError } = await supabase
+      const { data: pistaActualizada, error: updateError } = await supabase
         .from('pistas')
         .update(updateData)
         .eq('id', id)
         .select(`
           *,
           polideportivos:polideportivo_id (nombre, direccion)
-        `);
+        `)
+        .single();
 
       if (updateError) {
         console.error('Error al actualizar pista:', updateError);
@@ -851,14 +810,6 @@ router.put('/:id',
         });
       }
 
-      if (!pistasActualizadas || pistasActualizadas.length === 0) {
-        return res.status(404).json({ 
-          success: false,
-          error: 'Pista no encontrada después de actualizar' 
-        });
-      }
-
-      const pistaActualizada = pistasActualizadas[0];
       console.log(`✅ Pista actualizada: ${id} - ${pistaActualizada.nombre}`);
 
       const respuesta = {
@@ -890,47 +841,29 @@ router.put('/:id',
     }
 });
 
-// Eliminar pista (solo super_admin)
+// ✅ CORREGIDO: Eliminar pista (solo super_admin) - CON MEJOR MANEJO DE ERRORES
 router.delete('/:id', 
-  authenticateToken,
+  verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
   async (req, res) => {
     const { id } = req.params;
     const supabase = req.app.get('supabase');
-    const user = req.user;
 
-    console.log(`🗑️ Usuario ${user.rol} intentando eliminar pista ID: ${id}`);
-
-    // Solo super_admin puede eliminar pistas
-    if (user.rol !== ROLES.SUPER_ADMIN) {
-      return res.status(403).json({ 
-        success: false,
-        error: 'Solo los super administradores pueden eliminar pistas' 
-      });
-    }
+    console.log(`🗑️ Super_admin eliminando pista ID: ${id}`);
 
     try {
       // Verificar que la pista existe
-      const { data: pistas, error: pistaError } = await supabase
+      const { data: pista, error: pistaError } = await supabase
         .from('pistas')
         .select('id, nombre, polideportivo_id')
-        .eq('id', id);
+        .eq('id', id)
+        .single();
 
-      if (pistaError) {
-        console.error('Error al buscar pista:', pistaError);
-        return res.status(500).json({ 
-          success: false,
-          error: 'Error al buscar la pista' 
-        });
-      }
-
-      if (!pistas || pistas.length === 0) {
+      if (pistaError || !pista) {
         return res.status(404).json({ 
           success: false,
           error: 'Pista no encontrada' 
         });
       }
-
-      const pista = pistas[0];
 
       // Verificar si hay reservas asociadas a esta pista (cualquier estado excepto cancelada)
       const { data: reservas, error: reservasError } = await supabase
@@ -941,6 +874,7 @@ router.delete('/:id',
 
       if (reservasError) {
         console.error('Error al verificar reservas:', reservasError);
+        // No retornamos error, solo log
       }
 
       if (reservas && reservas.length > 0) {
@@ -959,7 +893,18 @@ router.delete('/:id',
         });
       }
 
-      // Eliminar pista
+      // Verificar si hay reservas canceladas (para información)
+      const { data: reservasCanceladas, error: canceladasError } = await supabase
+        .from('reservas')
+        .select('id')
+        .eq('pista_id', id)
+        .eq('estado', 'cancelada');
+
+      if (!canceladasError && reservasCanceladas && reservasCanceladas.length > 0) {
+        console.log(`ℹ️ La pista tiene ${reservasCanceladas.length} reserva(s) cancelada(s) que también serán eliminadas`);
+      }
+
+      // Eliminar pista (las reservas asociadas se eliminarán por CASCADE si está configurado)
       const { error: deleteError } = await supabase
         .from('pistas')
         .delete()

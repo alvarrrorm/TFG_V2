@@ -57,11 +57,9 @@ const emailjsConfig = {
 const reservasRouter = require('./rutas/reservas');
 const pistasRouter = require('./rutas/pistas');
 const polideportivosRouter = require('./rutas/polideportivos');
-const { router: usuariosRouter, verificarRol, filtrarPorPolideportivo, ROLES: USUARIOS_ROLES, NIVELES_PERMISO: USUARIOS_NIVELES } = require('./rutas/usuarios');
 
-// Sincronizar los roles importados con los locales
-Object.assign(ROLES, USUARIOS_ROLES || {});
-Object.assign(NIVELES_PERMISO, USUARIOS_NIVELES || {});
+// ✅ IMPORTAR EL ROUTER DE LOGIN SEPARADO
+const loginRouter = require('./rutas/login');
 
 // ========== MIDDLEWARE ==========
 app.use(cors({
@@ -413,7 +411,9 @@ app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 app.use('/api/reservas', reservasRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
-app.use('/api/usuarios', usuariosRouter);
+
+// ✅ USAR EL ROUTER DE LOGIN SEPARADO EN LUGAR DE LA RUTA DIRECTA
+app.use('/api', loginRouter); // Esto manejará /api/login
 
 // ========== RUTAS DE AUTENTICACIÓN SEGURA ==========
 
@@ -545,88 +545,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Login tradicional (mantener compatibilidad)
-app.post('/api/login', async (req, res) => {
-  try {
-    const { usuario, password } = req.body;
-    
-    console.log('🔐 Login tradicional para:', usuario);
-    
-    if (!usuario || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Usuario y contraseña requeridos'
-      });
-    }
-
-    const { data: user, error } = await supabase
-      .from('usuarios')
-      .select('*')
-      .eq('usuario', usuario)
-      .single();
-
-    if (error || !user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.pass);
-
-    if (!passwordValid) {
-      return res.status(401).json({
-        success: false,
-        error: 'Usuario o contraseña incorrectos'
-      });
-    }
-
-    // Preparar datos del usuario con polideportivo_id
-    const userData = {
-      id: user.id,
-      usuario: user.usuario,
-      nombre: user.nombre,
-      email: user.correo,
-      dni: user.dni,
-      rol: user.rol || ROLES.USUARIO,
-      telefono: user.telefono,
-      polideportivo_id: user.polideportivo_id || null
-    };
-
-    console.log('👤 Datos usuario (tradicional):', {
-      id: userData.id,
-      usuario: userData.usuario,
-      rol: userData.rol,
-      polideportivo_id: userData.polideportivo_id
-    });
-
-    // Generar token
-    const token = jwt.sign(
-      { 
-        ...userData,
-        type: 'access'
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    console.log('✅ Login exitoso:', usuario);
-    
-    res.json({
-      success: true,
-      message: 'Login exitoso',
-      token: token,
-      user: userData
-    });
-
-  } catch (error) {
-    console.error('❌ Error en login:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error interno del servidor'
-    });
-  }
-});
+// ✅ ELIMINAR LA RUTA /api/login DUPLICADA (ya está en loginRouter)
 
 // Verificar autenticación (usado por ProtectedRoute)
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
@@ -1524,7 +1443,7 @@ app.get('/api/health', (req, res) => {
     secureAuth: true,
     endpoints: {
       auth: '/api/auth/*',
-      login: '/api/auth/login',
+      login: '/api/login (router separado)',
       verify: '/api/auth/verify',
       refresh: '/api/auth/refresh',
       logout: '/api/auth/logout',
@@ -1809,10 +1728,10 @@ app.listen(PORT, () => {
   console.log(`   • ${ROLES.ADMIN} (nivel ${NIVELES_PERMISO[ROLES.ADMIN]})`);
   console.log(`   • ${ROLES.USUARIO} (nivel ${NIVELES_PERMISO[ROLES.USUARIO]})`);
   console.log(`🔑 Endpoints principales:`);
+  console.log(`   • Login tradicional: /api/login (router separado)`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
-  console.log(`   • Login tradicional: /api/login`);
   console.log(`   • Usuarios: /api/usuarios/*`);
-  console.log(`   • Reservas: /api/reservas/* (INCLUYE /api/reservas/mis-reservas)`);
+  console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
