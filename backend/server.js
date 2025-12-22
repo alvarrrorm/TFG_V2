@@ -1537,6 +1537,250 @@ app.get('/api/pistas', async (req, res) => {
   }
 });
 
+// ========== RUTAS ESPECÍFICAS PARA MANTENIMIENTO DE PISTAS ==========
+
+// Ruta para cambiar estado de mantenimiento de pista
+app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { enMantenimiento } = req.body;
+  const user = req.user;
+
+  console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
+
+  // Validar que el campo es booleano
+  if (typeof enMantenimiento !== 'boolean') {
+    return res.status(400).json({ 
+      success: false,
+      error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
+    });
+  }
+
+  try {
+    // Verificar que la pista existe
+    let query = supabase
+      .from('pistas')
+      .select('id, polideportivo_id, nombre, disponible')
+      .eq('id', id);
+
+    // Si es admin_poli, solo puede modificar pistas de su polideportivo
+    if (user.rol === ROLES.ADMIN_POLIDEPORTIVO && user.polideportivo_id) {
+      query = query.eq('polideportivo_id', user.polideportivo_id);
+    }
+
+    const { data: pista, error: pistaError } = await query.single();
+
+    if (pistaError || !pista) {
+      console.error('❌ Pista no encontrada o sin permisos:', pistaError);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Pista no encontrada o no tienes permisos para modificarla' 
+      });
+    }
+
+    console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+
+    // Lógica: Si enMantenimiento = true → poner en mantenimiento → disponible = false
+    // Si enMantenimiento = false → quitar mantenimiento → disponible = true
+    const nuevoDisponible = !enMantenimiento;
+
+    const updateData = { 
+      disponible: nuevoDisponible,
+      updated_at: new Date().toISOString()
+    };
+
+    // Actualizar estado en la base de datos
+    const { data: pistaActualizada, error: updateError } = await supabase
+      .from('pistas')
+      .update(updateData)
+      .eq('id', id)
+      .select(`
+        *,
+        polideportivos:polideportivo_id (nombre, direccion)
+      `);
+
+    // NO USAR .single() aquí porque después del UPDATE a veces no devuelve fila inmediatamente
+    if (updateError) {
+      console.error('❌ Error al actualizar estado:', updateError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al actualizar estado de mantenimiento: ' + updateError.message 
+      });
+    }
+
+    // Si no se devolvió data, obtener la pista actualizada por separado
+    if (!pistaActualizada || pistaActualizada.length === 0) {
+      // Obtener la pista actualizada
+      const { data: pistaActual, error: getError } = await supabase
+        .from('pistas')
+        .select(`
+          *,
+          polideportivos:polideportivo_id (nombre, direccion)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (getError) {
+        console.error('❌ Error obteniendo pista actualizada:', getError);
+        return res.status(500).json({ 
+          success: false,
+          error: 'Error al obtener pista actualizada' 
+        });
+      }
+
+      pistaActualizada[0] = pistaActual;
+    }
+
+    console.log(`✅ Estado actualizado pista ${id}: disponible = ${pistaActualizada[0].disponible}`);
+
+    const respuesta = {
+      id: pistaActualizada[0].id,
+      nombre: pistaActualizada[0].nombre,
+      tipo: pistaActualizada[0].tipo,
+      precio: parseFloat(pistaActualizada[0].precio),
+      descripcion: pistaActualizada[0].descripcion,
+      polideportivo_id: pistaActualizada[0].polideportivo_id,
+      polideportivo_nombre: pistaActualizada[0].polideportivos?.nombre,
+      polideportivo_direccion: pistaActualizada[0].polideportivos?.direccion,
+      disponible: pistaActualizada[0].disponible === true || pistaActualizada[0].disponible === 1,
+      created_at: pistaActualizada[0].created_at,
+      updated_at: pistaActualizada[0].updated_at
+    };
+
+    res.json({
+      success: true,
+      data: respuesta,
+      enMantenimiento: !respuesta.disponible,
+      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+    });
+
+  } catch (error) {
+    console.error('❌ Error al actualizar estado:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al actualizar estado de mantenimiento' 
+    });
+  }
+});
+
+// Ruta PATCH para compatibilidad
+app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { enMantenimiento } = req.body;
+  const user = req.user;
+
+  console.log(`🛠️ (PATCH) Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
+
+  // Validar que el campo es booleano
+  if (typeof enMantenimiento !== 'boolean') {
+    return res.status(400).json({ 
+      success: false,
+      error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
+    });
+  }
+
+  try {
+    // Verificar que la pista existe
+    let query = supabase
+      .from('pistas')
+      .select('id, polideportivo_id, nombre, disponible')
+      .eq('id', id);
+
+    // Si es admin_poli, solo puede modificar pistas de su polideportivo
+    if (user.rol === ROLES.ADMIN_POLIDEPORTIVO && user.polideportivo_id) {
+      query = query.eq('polideportivo_id', user.polideportivo_id);
+    }
+
+    const { data: pista, error: pistaError } = await query.single();
+
+    if (pistaError || !pista) {
+      console.error('❌ Pista no encontrada o sin permisos:', pistaError);
+      return res.status(404).json({ 
+        success: false,
+        error: 'Pista no encontrada o no tienes permisos para modificarla' 
+      });
+    }
+
+    // Lógica: Si enMantenimiento = true → poner en mantenimiento → disponible = false
+    // Si enMantenimiento = false → quitar mantenimiento → disponible = true
+    const nuevoDisponible = !enMantenimiento;
+
+    const updateData = { 
+      disponible: nuevoDisponible,
+      updated_at: new Date().toISOString()
+    };
+
+    // Actualizar estado en la base de datos
+    const { data: pistaActualizada, error: updateError } = await supabase
+      .from('pistas')
+      .update(updateData)
+      .eq('id', id)
+      .select(`
+        *,
+        polideportivos:polideportivo_id (nombre, direccion)
+      `);
+
+    if (updateError) {
+      console.error('❌ Error al actualizar estado:', updateError);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al actualizar estado de mantenimiento: ' + updateError.message 
+      });
+    }
+
+    // Si no se devolvió data, obtener la pista actualizada por separado
+    if (!pistaActualizada || pistaActualizada.length === 0) {
+      // Obtener la pista actualizada
+      const { data: pistaActual, error: getError } = await supabase
+        .from('pistas')
+        .select(`
+          *,
+          polideportivos:polideportivo_id (nombre, direccion)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (getError) {
+        console.error('❌ Error obteniendo pista actualizada:', getError);
+        return res.status(500).json({ 
+          success: false,
+          error: 'Error al obtener pista actualizada' 
+        });
+      }
+
+      pistaActualizada[0] = pistaActual;
+    }
+
+    console.log(`✅ (PATCH) Estado actualizado pista ${id}: disponible = ${pistaActualizada[0].disponible}`);
+
+    const respuesta = {
+      id: pistaActualizada[0].id,
+      nombre: pistaActualizada[0].nombre,
+      tipo: pistaActualizada[0].tipo,
+      precio: parseFloat(pistaActualizada[0].precio),
+      descripcion: pistaActualizada[0].descripcion,
+      polideportivo_id: pistaActualizada[0].polideportivo_id,
+      polideportivo_nombre: pistaActualizada[0].polideportivos?.nombre,
+      polideportivo_direccion: pistaActualizada[0].polideportivos?.direccion,
+      disponible: pistaActualizada[0].disponible === true || pistaActualizada[0].disponible === 1,
+      created_at: pistaActualizada[0].created_at,
+      updated_at: pistaActualizada[0].updated_at
+    };
+
+    res.json({
+      success: true,
+      data: respuesta,
+      enMantenimiento: !respuesta.disponible,
+      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+    });
+
+  } catch (error) {
+    console.error('❌ Error al actualizar estado:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al actualizar estado de mantenimiento' 
+    });
+  }
+});
 // ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
