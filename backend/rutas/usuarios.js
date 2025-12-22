@@ -6,74 +6,243 @@ const router = express.Router();
 const ROLES = {
   SUPER_ADMIN: 'super_admin',
   ADMIN_POLIDEPORTIVO: 'admin_poli',
-  ADMIN: 'admin',
   USUARIO: 'usuario'
 };
 
 const NIVELES_PERMISO = {
   [ROLES.SUPER_ADMIN]: 100,
   [ROLES.ADMIN_POLIDEPORTIVO]: 50,
-  [ROLES.ADMIN]: 40,
   [ROLES.USUARIO]: 10
 };
 
-// ========== RUTAS DE USUARIOS ==========
+// Middleware para verificar roles con nivel mínimo
+const verificarRol = (nivelMinimo) => {
+  return (req, res, next) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({ 
+          success: false, 
+          error: 'No autorizado - Token faltante' 
+        });
+      }
 
-// Obtener todos los usuarios (solo super_admin)
-router.get('/', async (req, res) => {
+      const token = authHeader.split(' ')[1];
+      if (!token) {
+        return res.status(401).json({ 
+          success: false, 
+          error: 'No autorizado - Token inválido' 
+        });
+      }
+
+      const jwt = require('jsonwebtoken');
+      const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024';
+      
+      const decoded = jwt.verify(token, JWT_SECRET);
+      
+      // Verificar nivel de permiso
+      const nivelUsuario = NIVELES_PERMISO[decoded.rol];
+      
+      if (!nivelUsuario || nivelUsuario < nivelMinimo) {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'Acceso denegado - Permisos insuficientes' 
+        });
+      }
+
+      req.user = decoded;
+      next();
+    } catch (error) {
+      console.error('Error en verificación de rol:', error);
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Token inválido o expirado' 
+      });
+    }
+  };
+};
+
+// Middleware para filtrar por polideportivo (para admin_poli)
+const filtrarPorPolideportivo = async (req, res, next) => {
   try {
+    // Si no es admin_poli, no aplicar filtro
+    if (req.user.rol !== ROLES.ADMIN_POLIDEPORTIVO) {
+      return next();
+    }
+
     const supabase = req.app.get('supabase');
     
-    console.log('📋 [USUARIOS] Obteniendo todos los usuarios...');
+    // Obtener el polideportivo_id del admin
+    const { data: adminData, error } = await supabase
+      .from('usuarios')
+      .select('polideportivo_id')
+      .eq('id', req.user.id)
+      .single();
+    
+    if (error || !adminData) {
+      console.error('Error al obtener datos del admin:', error);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Administrador no encontrado' 
+      });
+    }
+    
+    if (!adminData.polideportivo_id) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Admin de polideportivo no tiene polideportivo asignado' 
+      });
+    }
+    
+    req.user.polideportivo_id = adminData.polideportivo_id;
+    next();
+  } catch (error) {
+    console.error('Error en filtrarPorPolideportivo:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+};
+
+// Middleware para usar en otras rutas (pistas, reservas)
+const middlewarePolideportivo = [
+  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]),
+  filtrarPorPolideportivo
+];
+
+// Ruta 1: Obtener todos los usuarios (solo super_admin)
+router.get('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+  try {
+    const supabase = req.app.get('supabase');
     
     const { data: usuarios, error } = await supabase
       .from('usuarios')
       .select(`
-        id, 
-        dni, 
-        nombre, 
-        correo, 
-        usuario, 
-        rol, 
-        telefono, 
-        fecha_creacion, 
-        fecha_actualizacion,
+        id, dni, nombre, correo, usuario, rol, telefono, 
+        fecha_creacion, fecha_actualizacion,
         polideportivo_id,
-        polideportivos (id, nombre, direccion)
+        polideportivos (id, nombre)
       `)
       .order('fecha_creacion', { ascending: false });
 
-    if (error) {
-      console.error('❌ [USUARIOS] Error obteniendo usuarios:', error);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al obtener usuarios: ' + error.message 
-      });
-    }
+    if (error) throw error;
 
-    console.log(`✅ [USUARIOS] Obtenidos ${usuarios?.length || 0} usuarios`);
-    
     res.json({ 
       success: true, 
-      data: usuarios || [] 
+      data: usuarios 
     });
   } catch (error) {
-    console.error('❌ [USUARIOS] Error en GET /api/usuarios:', error);
+    console.error('Error en GET /api/usuarios:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor: ' + error.message 
+      error: 'Error al obtener usuarios: ' + error.message 
     });
   }
 });
 
-// Cambiar rol de usuario (solo super_admin)
-router.put('/cambiar-rol/:id', async (req, res) => {
+// Ruta 1b: Endpoint especial para frontend con información completa
+router.get('/con-poli', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+  try {
+    const supabase = req.app.get('supabase');
+    
+    const { data: usuarios, error } = await supabase
+      .from('usuarios')
+      .select(`
+        id, dni, nombre, correo, usuario, rol, telefono, 
+        fecha_creacion, fecha_actualizacion,
+        polideportivo_id,
+        polideportivos (id, nombre, direccion, telefono)
+      `)
+      .order('fecha_creacion', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ 
+      success: true, 
+      data: usuarios 
+    });
+  } catch (error) {
+    console.error('Error en GET /api/usuarios/con-poli:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al obtener usuarios: ' + error.message 
+    });
+  }
+});
+
+// Ruta 2: Obtener usuarios de un polideportivo
+router.get('/polideportivo/:id?', 
+  verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), 
+  filtrarPorPolideportivo,
+  async (req, res) => {
+    try {
+      const supabase = req.app.get('supabase');
+      
+      let polideportivoId = req.params.id;
+      
+      // Si es admin_poli, forzar su polideportivo
+      if (req.user.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+        if (polideportivoId && parseInt(polideportivoId) !== req.user.polideportivo_id) {
+          return res.status(403).json({ 
+            success: false, 
+            error: 'Solo puedes ver usuarios de tu polideportivo' 
+          });
+        }
+        polideportivoId = req.user.polideportivo_id;
+      }
+      
+      // Si es super_admin y no especifica polideportivo, ver todos
+      if (!polideportivoId && req.user.rol === ROLES.SUPER_ADMIN) {
+        const { data: usuarios, error } = await supabase
+          .from('usuarios')
+          .select(`
+            id, dni, nombre, correo, usuario, rol, telefono,
+            fecha_creacion,
+            polideportivo_id,
+            polideportivos (id, nombre)
+          `)
+          .order('nombre');
+          
+        if (error) throw error;
+        return res.json({ success: true, data: usuarios });
+      }
+      
+      // Obtener usuarios del polideportivo específico
+      const { data: usuarios, error } = await supabase
+        .from('usuarios')
+        .select(`
+          id, dni, nombre, correo, usuario, rol, telefono,
+          fecha_creacion,
+          polideportivo_id,
+          polideportivos (id, nombre)
+        `)
+        .eq('polideportivo_id', polideportivoId)
+        .order('nombre');
+      
+      if (error) throw error;
+
+      res.json({ 
+        success: true, 
+        data: usuarios 
+      });
+    } catch (error) {
+      console.error('Error en GET /api/usuarios/polideportivo:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener usuarios: ' + error.message 
+      });
+    }
+  }
+);
+
+// Ruta 3: Cambiar rol de usuario (solo super_admin)
+router.put('/cambiar-rol/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
   try {
     const supabase = req.app.get('supabase');
     const { id } = req.params;
     const { nuevoRol, passwordConfirmacion, polideportivo_id } = req.body;
-    
-    console.log(`👑 [USUARIOS] Cambiando rol del usuario ${id} a ${nuevoRol}...`);
+    const adminId = req.user.id;
 
     // Validaciones
     if (!nuevoRol || !passwordConfirmacion) {
@@ -104,7 +273,7 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       // Verificar que el polideportivo existe
       const { data: poliExistente, error: poliError } = await supabase
         .from('polideportivos')
-        .select('id, nombre')
+        .select('id')
         .eq('id', polideportivo_id)
         .single();
         
@@ -116,35 +285,10 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       }
     }
 
-    // 1. Obtener el token del header para identificar al super_admin
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'No autorizado' 
-      });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
-    
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (jwtError) {
-      return res.status(401).json({ 
-        success: false, 
-        error: 'Token inválido o expirado' 
-      });
-    }
-
-    const adminId = decoded.id;
-
-    // 2. Verificar que el administrador es super_admin
+    // 1. Verificar contraseña del super admin
     const { data: adminData, error: adminError } = await supabase
       .from('usuarios')
-      .select('id, rol, pass')
+      .select('pass')
       .eq('id', adminId)
       .single();
 
@@ -155,14 +299,6 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       });
     }
 
-    if (adminData.rol !== ROLES.SUPER_ADMIN) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Solo los super administradores pueden cambiar roles' 
-      });
-    }
-
-    // 3. Verificar contraseña del super admin
     const passwordValida = await bcrypt.compare(passwordConfirmacion, adminData.pass);
     if (!passwordValida) {
       return res.status(401).json({ 
@@ -171,10 +307,10 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       });
     }
 
-    // 4. Verificar que el usuario existe
+    // 2. Verificar que el usuario existe
     const { data: usuarioExistente, error: usuarioError } = await supabase
       .from('usuarios')
-      .select('id, rol, usuario, nombre')
+      .select('id, rol')
       .eq('id', id)
       .single();
 
@@ -185,7 +321,7 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       });
     }
 
-    // 5. No permitir modificar a otro super admin
+    // 3. No permitir modificar a otro super admin
     if (usuarioExistente.rol === ROLES.SUPER_ADMIN && id !== adminId.toString()) {
       return res.status(403).json({ 
         success: false, 
@@ -193,7 +329,7 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       });
     }
 
-    // 6. No permitir que un super admin se quite a sí mismo los privilegios
+    // 4. No permitir que un super admin se quite a sí mismo los privilegios
     if (parseInt(id) === adminId && nuevoRol !== ROLES.SUPER_ADMIN) {
       return res.status(400).json({ 
         success: false, 
@@ -201,7 +337,7 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       });
     }
 
-    // 7. Preparar datos para actualizar
+    // 5. Preparar datos para actualizar
     const updateData = {
       rol: nuevoRol,
       fecha_actualizacion: new Date().toISOString()
@@ -214,28 +350,22 @@ router.put('/cambiar-rol/:id', async (req, res) => {
       updateData.polideportivo_id = null;
     }
 
-    // 8. Actualizar usuario
+    // 6. Actualizar usuario
     const { data: usuarioActualizado, error: updateError } = await supabase
       .from('usuarios')
       .update(updateData)
       .eq('id', id)
       .select(`
         id, dni, nombre, correo, usuario, rol, telefono,
-        fecha_creacion, fecha_actualizacion, polideportivo_id,
-        polideportivos (id, nombre, direccion)
+        fecha_creacion, polideportivo_id,
+        polideportivos (id, nombre)
       `)
       .single();
 
-    if (updateError) {
-      console.error('❌ [USUARIOS] Error actualizando usuario:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al actualizar usuario: ' + updateError.message 
-      });
-    }
+    if (updateError) throw updateError;
 
-    // 9. Registrar acción
-    console.log(`✅ [USUARIOS] Usuario ${usuarioExistente.usuario} (${usuarioExistente.nombre}) cambiado a rol ${nuevoRol} por super_admin ${adminId}`);
+    // 7. Registrar acción
+    console.log(`✅ Usuario ${id} cambiado a rol ${nuevoRol} por super_admin ${adminId}`);
 
     res.json({ 
       success: true,
@@ -244,21 +374,82 @@ router.put('/cambiar-rol/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ [USUARIOS] Error en PUT /api/usuarios/cambiar-rol:', error);
+    console.error('Error en PUT /api/usuarios/cambiar-rol:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor: ' + error.message 
+      error: 'Error al cambiar rol: ' + error.message 
     });
   }
 });
 
-// Ruta para crear nuevo usuario (solo super_admin)
-router.post('/', async (req, res) => {
+// Ruta 4: Obtener polideportivos disponibles para asignar
+router.get('/polideportivos/disponibles', 
+  verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), 
+  async (req, res) => {
+    try {
+      const supabase = req.app.get('supabase');
+      
+      // Obtener polideportivos que no tienen admin asignado
+      const { data: polideportivos, error } = await supabase
+        .from('polideportivos')
+        .select(`
+          id, nombre, direccion, telefono, created_at
+        `)
+        .order('nombre');
+
+      if (error) throw error;
+
+      res.json({ 
+        success: true, 
+        data: polideportivos 
+      });
+    } catch (error) {
+      console.error('Error en GET /api/usuarios/polideportivos/disponibles:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener polideportivos: ' + error.message 
+      });
+    }
+});
+
+// Ruta 5: Mi perfil (cualquier usuario autenticado)
+router.get('/mi-perfil', 
+  verificarRol(NIVELES_PERMISO[ROLES.USUARIO]), 
+  async (req, res) => {
+    try {
+      const supabase = req.app.get('supabase');
+      
+      const { data: usuario, error } = await supabase
+        .from('usuarios')
+        .select(`
+          id, dni, nombre, correo, usuario, rol, telefono,
+          fecha_creacion, fecha_actualizacion,
+          polideportivo_id,
+          polideportivos (id, nombre, direccion)
+        `)
+        .eq('id', req.user.id)
+        .single();
+
+      if (error) throw error;
+
+      res.json({ 
+        success: true, 
+        data: usuario 
+      });
+    } catch (error) {
+      console.error('Error en GET /api/usuarios/mi-perfil:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener perfil: ' + error.message 
+      });
+    }
+});
+
+// Ruta 6: Crear nuevo usuario (solo super_admin)
+router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
   try {
     const supabase = req.app.get('supabase');
     const { dni, nombre, correo, usuario, telefono, pass, rol, polideportivo_id } = req.body;
-
-    console.log(`👤 [USUARIOS] Creando nuevo usuario: ${usuario}`);
 
     // Validaciones básicas
     if (!dni || !nombre || !correo || !usuario || !pass || !rol) {
@@ -315,27 +506,7 @@ router.post('/', async (req, res) => {
       `)
       .single();
 
-    if (error) {
-      console.error('❌ [USUARIOS] Error creando usuario:', error);
-      
-      // Manejar errores de duplicados
-      if (error.code === '23505') {
-        const field = error.message.includes('dni') ? 'DNI' : 
-                     error.message.includes('correo') ? 'correo' : 
-                     error.message.includes('usuario') ? 'usuario' : 'campo único';
-        return res.status(400).json({ 
-          success: false, 
-          error: `El ${field} ya está registrado` 
-        });
-      }
-
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error al crear usuario: ' + error.message 
-      });
-    }
-
-    console.log(`✅ [USUARIOS] Usuario creado exitosamente: ${nuevoUsuario.usuario}`);
+    if (error) throw error;
 
     res.status(201).json({ 
       success: true, 
@@ -344,64 +515,176 @@ router.post('/', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ [USUARIOS] Error en POST /api/usuarios:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error interno del servidor: ' + error.message 
-    });
-  }
-});
-
-// Ruta para eliminar usuario (solo super_admin)
-router.delete('/:id', async (req, res) => {
-  try {
-    const supabase = req.app.get('supabase');
-    const { id } = req.params;
+    console.error('Error en POST /api/usuarios:', error);
     
-    console.log(`🗑️ [USUARIOS] Eliminando usuario ID: ${id}`);
-
-    const { error } = await supabase
-      .from('usuarios')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('❌ [USUARIOS] Error eliminando usuario:', error);
-      return res.status(500).json({ 
+    // Manejar errores de duplicados
+    if (error.code === '23505') {
+      const field = error.message.includes('dni') ? 'DNI' : 
+                   error.message.includes('correo') ? 'correo' : 
+                   error.message.includes('usuario') ? 'usuario' : 'campo único';
+      return res.status(400).json({ 
         success: false, 
-        error: 'Error al eliminar usuario: ' + error.message 
+        error: `El ${field} ya está registrado` 
       });
     }
 
-    console.log(`✅ [USUARIOS] Usuario ${id} eliminado exitosamente`);
-
-    res.json({ 
-      success: true,
-      message: 'Usuario eliminado exitosamente'
-    });
-
-  } catch (error) {
-    console.error('❌ [USUARIOS] Error en DELETE /api/usuarios/:id:', error);
     res.status(500).json({ 
       success: false, 
-      error: 'Error interno del servidor: ' + error.message 
+      error: 'Error al crear usuario: ' + error.message 
     });
   }
 });
 
-// Health check de usuarios
-router.get('/health', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'API de usuarios funcionando',
-    timestamp: new Date().toISOString(),
-    endpoints: {
-      obtenerUsuarios: 'GET /api/usuarios',
-      cambiarRol: 'PUT /api/usuarios/cambiar-rol/:id',
-      crearUsuario: 'POST /api/usuarios',
-      eliminarUsuario: 'DELETE /api/usuarios/:id'
+// Ruta 7: Asignar/quitar admin de polideportivo específico
+router.put('/admin-poli/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
+  try {
+    const supabase = req.app.get('supabase');
+    const { id } = req.params;
+    const { accion, polideportivo_id, passwordConfirmacion } = req.body;
+    const adminId = req.user.id;
+
+    // Validaciones
+    if (!accion || !passwordConfirmacion) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Faltan datos: accion y passwordConfirmacion son obligatorios' 
+      });
     }
-  });
+
+    if (accion === 'asignar' && !polideportivo_id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Para asignar admin_poli se requiere polideportivo_id' 
+      });
+    }
+
+    // 1. Verificar contraseña del super admin
+    const { data: adminData, error: adminError } = await supabase
+      .from('usuarios')
+      .select('pass')
+      .eq('id', adminId)
+      .single();
+
+    if (adminError || !adminData) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Administrador no encontrado' 
+      });
+    }
+
+    const passwordValida = await bcrypt.compare(passwordConfirmacion, adminData.pass);
+    if (!passwordValida) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Contraseña incorrecta. No tienes permisos para realizar esta acción.' 
+      });
+    }
+
+    // 2. Verificar que el usuario existe
+    const { data: usuarioExistente, error: usuarioError } = await supabase
+      .from('usuarios')
+      .select('id, rol')
+      .eq('id', id)
+      .single();
+
+    if (usuarioError || !usuarioExistente) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Usuario no encontrado' 
+      });
+    }
+
+    // 3. No permitir modificar a otro super admin
+    if (usuarioExistente.rol === ROLES.SUPER_ADMIN) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'No puedes modificar a un super administrador' 
+      });
+    }
+
+    let updateData;
+    let nuevoRol;
+    let message;
+
+    if (accion === 'asignar') {
+      // Verificar que el polideportivo existe
+      const { data: poliExistente, error: poliError } = await supabase
+        .from('polideportivos')
+        .select('id, nombre')
+        .eq('id', polideportivo_id)
+        .single();
+        
+      if (poliError || !poliExistente) {
+        return res.status(404).json({ 
+          success: false, 
+          error: 'Polideportivo no encontrado' 
+        });
+      }
+
+      updateData = {
+        rol: ROLES.ADMIN_POLIDEPORTIVO,
+        polideportivo_id: polideportivo_id,
+        fecha_actualizacion: new Date().toISOString()
+      };
+      
+      nuevoRol = ROLES.ADMIN_POLIDEPORTIVO;
+      message = `Asignado como administrador del polideportivo ${poliExistente.nombre}`;
+      
+    } else if (accion === 'quitar') {
+      updateData = {
+        rol: ROLES.USUARIO,
+        polideportivo_id: null,
+        fecha_actualizacion: new Date().toISOString()
+      };
+      
+      nuevoRol = ROLES.USUARIO;
+      message = 'Quitado como administrador de polideportivo';
+      
+    } else {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Acción no válida. Use "asignar" o "quitar"' 
+      });
+    }
+
+    // 4. Actualizar usuario
+    const { data: usuarioActualizado, error: updateError } = await supabase
+      .from('usuarios')
+      .update(updateData)
+      .eq('id', id)
+      .select(`
+        id, dni, nombre, correo, usuario, rol, telefono,
+        fecha_creacion, polideportivo_id,
+        polideportivos (id, nombre)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // 5. Registrar acción
+    console.log(`✅ Usuario ${id} ${accion} admin_poli por super_admin ${adminId}`);
+
+    res.json({ 
+      success: true,
+      message: message,
+      data: usuarioActualizado
+    });
+
+  } catch (error) {
+    console.error('Error en PUT /api/usuarios/admin-poli/:id:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al gestionar admin de polideportivo: ' + error.message 
+    });
+  }
 });
 
-module.exports = router;
+// Exportar todo lo necesario para otras rutas
+module.exports = {
+  router,
+  ROLES,
+  NIVELES_PERMISO,
+  verificarRol,
+  filtrarPorPolideportivo,
+  middlewarePolideportivo
+};
