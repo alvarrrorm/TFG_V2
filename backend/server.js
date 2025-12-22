@@ -61,6 +61,9 @@ const polideportivosRouter = require('./rutas/polideportivos');
 // ✅ IMPORTAR EL ROUTER DE LOGIN SEPARADO
 const loginRouter = require('./rutas/login');
 
+// ✅ IMPORTAR EL ROUTER DE USUARIOS - ¡ESTO ES LO QUE FALTABA!
+const usuariosRoutes = require('./rutas/usuarios');
+
 // ========== MIDDLEWARE ==========
 app.use(cors({
   origin: [
@@ -407,7 +410,10 @@ app.set('verificarEsAdmin', verificarEsAdmin);
 app.set('verificarEsSuperAdmin', verificarEsSuperAdmin);
 app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 
-// ========== REGISTRAR ROUTERS PRINCIPALES PRIMERO ==========
+// ========== REGISTRAR ROUTERS PRINCIPALES ==========
+// ✅ REGISTRAR EL ROUTER DE USUARIOS - ¡ESTE ES EL CAMBIO CLAVE!
+app.use('/api/usuarios', usuariosRoutes.router);
+
 app.use('/api/reservas', reservasRouter);
 app.use('/api/pistas', pistasRouter);
 app.use('/api/polideportivos', polideportivosRouter);
@@ -1730,7 +1736,7 @@ app.listen(PORT, () => {
   console.log(`🔑 Endpoints principales:`);
   console.log(`   • Login tradicional: /api/login (router separado)`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
-  console.log(`   • Usuarios: /api/usuarios/*`);
+  console.log(`   • Usuarios: /api/usuarios/* ✅ AHORA REGISTRADO`);
   console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
