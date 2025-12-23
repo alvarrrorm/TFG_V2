@@ -484,22 +484,22 @@ router.get('/mi-polideportivo/pistas',
     }
 });
 
-// ✅ CORREGIDO: Cambiar estado de mantenimiento - VERSIÓN ÚNICA Y FUNCIONAL
+// ✅ CORREGIDO: Cambiar estado de mantenimiento - USAR 'disponible'
 router.put('/:id/mantenimiento', 
   authenticateToken,
   async (req, res) => {
     const { id } = req.params;
-    const { enMantenimiento } = req.body;
+    const { disponible } = req.body;  // ← Cambiado de 'enMantenimiento' a 'disponible'
     const supabase = req.app.get('supabase');
     const user = req.user;
 
-    console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
+    console.log(`🛠️ Cambiando mantenimiento pista ${id}, disponible:`, disponible, 'usuario:', user.rol);
 
     // Validar que el campo es booleano
-    if (typeof enMantenimiento !== 'boolean') {
+    if (typeof disponible !== 'boolean') {
       return res.status(400).json({ 
         success: false,
-        error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
+        error: 'El campo disponible debe ser un valor booleano (true/false)' 
       });
     }
 
@@ -524,12 +524,10 @@ router.put('/:id/mantenimiento',
         });
       }
 
-      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+      console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: disponible = ${disponible}`);
 
-      // ✅ LÓGICA CORRECTA: 
-      // - Si enMantenimiento = true → poner en mantenimiento → disponible = false
-      // - Si enMantenimiento = false → quitar mantenimiento → disponible = true
-      const nuevoDisponible = !enMantenimiento;
+      // ✅ LÓGICA SIMPLE: El valor 'disponible' que recibimos es el nuevo estado
+      const nuevoDisponible = disponible;
 
       const updateData = { 
         disponible: nuevoDisponible,
@@ -574,8 +572,7 @@ router.put('/:id/mantenimiento',
       res.json({
         success: true,
         data: respuesta,
-        enMantenimiento: !respuesta.disponible,
-        message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+        message: `Pista ${disponible ? 'reactivada' : 'puesta en mantenimiento'} correctamente`
       });
 
     } catch (error) {
