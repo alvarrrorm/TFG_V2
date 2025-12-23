@@ -5,18 +5,39 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const emailjs = require('@emailjs/nodejs');
 
-// ========== CONFIGURACIÓN ==========
+// ========== CONFIGURACIÓN COMPLETA ==========
 const supabaseUrl = process.env.SUPABASE_URL || 'https://oiejhhkggnmqrubypvrt.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY;
+
+// CONFIGURACIÓN CORREGIDA: USAR SERVICE ROLE KEY PARA PERMISOS COMPLETOS
+const supabaseAnonKey = process.env.SUPABASE_KEY; // Anterior: supabaseKey (clave pública)
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Nueva: Service Role Key
+
 const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'mi_clave_refresh_segura_2024';
 
-if (!supabaseKey) {
-  console.error('❌ ERROR: SUPABASE_KEY no configurada');
+// VERIFICAR CLAVES
+if (!supabaseServiceKey) {
+  console.error('❌ ERROR: SUPABASE_SERVICE_ROLE_KEY no configurada en Railway');
+  console.log('⚠️  Solución: Verifica que añadiste la variable en Railway como SUPABASE_SERVICE_ROLE_KEY');
+  console.log('⚠️  Usando clave pública como fallback...');
+}
+
+if (!supabaseAnonKey && !supabaseServiceKey) {
+  console.error('❌ ERROR CRÍTICO: No hay claves de Supabase configuradas');
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+// CREAR DOS CLIENTES: UNO CON SERVICE KEY PARA ADMIN, OTRO CON ANON KEY PARA USUARIOS
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
+
+// Cliente público para operaciones regulares
+const supabasePublic = createClient(supabaseUrl, supabaseAnonKey || supabaseServiceKey);
+
 const app = express();
 
 // Almacenamiento de refresh tokens (en producción usa Redis)
@@ -61,7 +82,7 @@ const polideportivosRouter = require('./rutas/polideportivos');
 // ✅ IMPORTAR EL ROUTER DE LOGIN SEPARADO
 const loginRouter = require('./rutas/login');
 
-// ✅ IMPORTAR EL ROUTER DE USUARIOS - ¡ESTO ES LO QUE FALTABA!
+// ✅ IMPORTAR EL ROUTER DE USUARIOS
 const usuariosRoutes = require('./rutas/usuarios');
 
 // ========== MIDDLEWARE ==========
@@ -263,6 +284,20 @@ function generarCodigo() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Función para obtener el cliente Supabase correcto según el rol
+function getSupabaseClient(user = null) {
+  if (!user) {
+    return supabasePublic; // Usuario no autenticado
+  }
+  
+  // Administradores obtienen el cliente con Service Role Key
+  if (user.rol === ROLES.SUPER_ADMIN || user.rol === ROLES.ADMIN || user.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+    return supabaseAdmin;
+  }
+  
+  return supabasePublic; // Usuarios regulares
+}
+
 // ========== FUNCIONES DE EMAIL ==========
 async function enviarEmailRecuperacion(datos) {
   try {
@@ -371,7 +406,8 @@ async function obtenerEmailUsuario(userId) {
       return null;
     }
 
-    const { data: usuario, error } = await supabase
+    const supabaseClient = getSupabaseClient();
+    const { data: usuario, error } = await supabaseClient
       .from('usuarios')
       .select('id, correo, nombre, usuario')
       .eq('id', userId)
@@ -401,7 +437,9 @@ async function obtenerEmailUsuario(userId) {
 }
 
 // ========== INYECTAR FUNCIONES EN LA APP ==========
-app.set('supabase', supabase);
+app.set('supabase', supabasePublic); // Cliente público por defecto
+app.set('supabaseAdmin', supabaseAdmin); // Cliente admin para rutas protegidas
+app.set('getSupabaseClient', getSupabaseClient); // Función para obtener cliente según rol
 app.set('enviarEmailConfirmacion', enviarEmailConfirmacionReserva);
 app.set('obtenerEmailUsuario', obtenerEmailUsuario);
 app.set('ROLES', ROLES);
@@ -411,7 +449,7 @@ app.set('verificarEsSuperAdmin', verificarEsSuperAdmin);
 app.set('verificarEsAdminPoli', verificarEsAdminPoli);
 
 // ========== REGISTRAR ROUTERS PRINCIPALES ==========
-// ✅ REGISTRAR EL ROUTER DE USUARIOS - ¡ESTE ES EL CAMBIO CLAVE!
+// ✅ REGISTRAR EL ROUTER DE USUARIOS
 app.use('/api/usuarios', usuariosRoutes.router);
 
 app.use('/api/reservas', reservasRouter);
@@ -432,7 +470,12 @@ app.get('/api/auth/health', (req, res) => {
     secure: true,
     cookiesEnabled: true,
     jwt: '✅ Configurado',
-    refreshTokens: '✅ Configurado'
+    refreshTokens: '✅ Configurado',
+    supabaseKeys: {
+      hasAnonKey: !!supabaseAnonKey,
+      hasServiceKey: !!supabaseServiceKey,
+      usingServiceKey: !!supabaseServiceKey
+    }
   });
 });
 
@@ -450,7 +493,7 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    const { data: user, error } = await supabase
+    const { data: user, error } = await supabasePublic
       .from('usuarios')
       .select('*')
       .eq('usuario', usuario)
@@ -551,8 +594,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ✅ ELIMINAR LA RUTA /api/login DUPLICADA (ya está en loginRouter)
-
 // Verificar autenticación (usado por ProtectedRoute)
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
   console.log('✅ Autenticación verificada para usuario:', req.user?.id);
@@ -596,7 +637,7 @@ app.post('/api/auth/refresh', (req, res) => {
       }
 
       // Buscar usuario para obtener datos actualizados
-      const { data: user, error } = await supabase
+      const { data: user, error } = await supabasePublic
         .from('usuarios')
         .select('id, usuario, nombre, correo, dni, rol, telefono, polideportivo_id')
         .eq('id', decoded.id)
@@ -700,7 +741,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
     }
 
     // Verificar si el usuario existe y obtener TODOS LOS DATOS
-    const { data: usuarios, error: userError } = await supabase
+    const { data: usuarios, error: userError } = await supabasePublic
       .from('usuarios')
       .select('id, nombre, correo, usuario, dni, telefono')
       .eq('correo', email)
@@ -731,7 +772,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
     const codigo = generarCodigo();
     
     // Guardar código en la base de datos CON EL USER_ID para seguimiento
-    const { error: insertError } = await supabase
+    const { error: insertError } = await supabasePublic
       .from('recuperacion_password')
       .insert([{
         email: email,
@@ -818,7 +859,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
     }
 
     // Verificar si el usuario existe
-    const { data: usuarios, error: userError } = await supabase
+    const { data: usuarios, error: userError } = await supabasePublic
       .from('usuarios')
       .select('id, nombre, correo, usuario')
       .eq('correo', email)
@@ -847,7 +888,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
     const nuevoCodigo = generarCodigo();
     
     // Guardar NUEVO código en la base de datos
-    const { error: insertError } = await supabase
+    const { error: insertError } = await supabasePublic
       .from('recuperacion_password')
       .insert([{
         email: email,
@@ -926,7 +967,7 @@ app.post('/api/recupera/verificar-codigo', async (req, res) => {
     }
 
     // Verificar código en la base de datos
-    const { data: recuperaciones, error } = await supabase
+    const { data: recuperaciones, error } = await supabasePublic
       .from('recuperacion_password')
       .select('*')
       .eq('email', email)
@@ -955,7 +996,7 @@ app.post('/api/recupera/verificar-codigo', async (req, res) => {
     const recuperacion = recuperaciones[0];
     
     // Obtener información del usuario
-    const { data: usuario } = await supabase
+    const { data: usuario } = await supabasePublic
       .from('usuarios')
       .select('usuario, nombre')
       .eq('id', recuperacion.user_id)
@@ -1007,7 +1048,7 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
     }
 
     // Verificar que el código es válido
-    const { data: recuperaciones, error: verificarError } = await supabase
+    const { data: recuperaciones, error: verificarError } = await supabasePublic
       .from('recuperacion_password')
       .select('*')
       .eq('email', email)
@@ -1042,7 +1083,7 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
       console.log('🔐 Contraseña encriptada correctamente para user_id:', userId);
 
       // Actualizar contraseña del usuario
-      const { error: updateError } = await supabase
+      const { error: updateError } = await supabasePublic
         .from('usuarios')
         .update({ pass: hashedPassword })
         .eq('id', userId);
@@ -1056,14 +1097,14 @@ app.post('/api/recupera/cambiar-password', async (req, res) => {
       }
 
       // Marcar código como usado
-      await supabase
+      await supabasePublic
         .from('recuperacion_password')
         .update({ usado: true })
         .eq('email', email)
         .eq('codigo', codigo);
 
       // Obtener información del usuario para el log
-      const { data: usuario } = await supabase
+      const { data: usuario } = await supabasePublic
         .from('usuarios')
         .select('usuario, nombre')
         .eq('id', userId)
@@ -1144,7 +1185,8 @@ app.get('/api/admin-poli/mi-polideportivo', authenticateToken, verificarEsAdminP
     
     console.log('🏢 Obteniendo polideportivo para admin_poli:', polideportivo_id);
     
-    const { data: polideportivo, error } = await supabase
+    const supabaseClient = getSupabaseClient(req.user);
+    const { data: polideportivo, error } = await supabaseClient
       .from('polideportivos')
       .select('*')
       .eq('id', polideportivo_id)
@@ -1179,7 +1221,8 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
     
     console.log('📋 Obteniendo reservas del polideportivo (admin_poli):', polideportivo_id);
     
-    let query = supabase
+    const supabaseClient = getSupabaseClient(req.user);
+    let query = supabaseClient
       .from('reservas')
       .select(`
         *,
@@ -1225,7 +1268,7 @@ app.get('/api/admin-poli/reservas', authenticateToken, verificarEsAdminPoli, asy
       
       if (reserva.usuario_id && reserva.usuario_id !== 0) {
         try {
-          const { data: usuario, error: usuarioError } = await supabase
+          const { data: usuario, error: usuarioError } = await supabaseClient
             .from('usuarios')
             .select('usuario, correo, telefono')
             .eq('id', reserva.usuario_id)
@@ -1275,8 +1318,10 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
     
     console.log('✅ Confirmando reserva ID:', id, 'para polideportivo:', polideportivo_id);
     
+    const supabaseClient = getSupabaseClient(req.user);
+    
     // Verificar que la reserva pertenece al polideportivo del admin
-    const { data: reserva, error: reservaError } = await supabase
+    const { data: reserva, error: reservaError } = await supabaseClient
       .from('reservas')
       .select('*')
       .eq('id', id)
@@ -1298,7 +1343,7 @@ app.put('/api/admin-poli/reservas/:id/confirmar', authenticateToken, verificarEs
     }
     
     // Actualizar reserva
-    const { data: reservaActualizada, error: updateError } = await supabase
+    const { data: reservaActualizada, error: updateError } = await supabaseClient
       .from('reservas')
       .update({ 
         estado: 'confirmada',
@@ -1366,8 +1411,10 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
     
     console.log('❌ Cancelando reserva ID:', id, 'para polideportivo:', polideportivo_id);
     
+    const supabaseClient = getSupabaseClient(req.user);
+    
     // Verificar que la reserva pertenece al polideportivo del admin
-    const { data: reserva, error: reservaError } = await supabase
+    const { data: reserva, error: reservaError } = await supabaseClient
       .from('reservas')
       .select('*')
       .eq('id', id)
@@ -1389,7 +1436,7 @@ app.put('/api/admin-poli/reservas/:id/cancelar', authenticateToken, verificarEsA
     }
     
     // Actualizar reserva
-    const { data: reservaActualizada, error: updateError } = await supabase
+    const { data: reservaActualizada, error: updateError } = await supabaseClient
       .from('reservas')
       .update({ 
         estado: 'cancelada',
@@ -1433,8 +1480,156 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
     success: true, 
     message: 'Panel de administración funcionando',
     user: req.user,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    supabaseAccess: 'Service Role Key: ' + (!!supabaseServiceKey ? '✅ ACTIVADA' : '❌ NO DISPONIBLE')
   });
+});
+
+// ========== NUEVAS RUTAS DE ADMINISTRACIÓN COMPLETAS ==========
+
+// Ruta para obtener todas las reservas (admin completo)
+app.get('/api/admin/reservas', authenticateToken, verificarEsAdmin, async (req, res) => {
+  try {
+    const { fecha, estado, polideportivo_id, usuario_id } = req.query;
+    
+    console.log('📋 Obteniendo todas las reservas (admin)');
+    
+    const supabaseClient = getSupabaseClient(req.user);
+    let query = supabaseClient
+      .from('reservas')
+      .select(`
+        *,
+        pistas!inner(nombre, tipo, precio),
+        polideportivos!inner(nombre, direccion),
+        usuarios:usuario_id(usuario, correo, nombre, telefono)
+      `)
+      .order('fecha', { ascending: false })
+      .order('hora_inicio', { ascending: false });
+    
+    // Filtros
+    if (fecha) {
+      query = query.eq('fecha', fecha);
+    }
+    
+    if (estado) {
+      query = query.eq('estado', estado);
+    }
+    
+    if (polideportivo_id && polideportivo_id !== '0') {
+      query = query.eq('polideportivo_id', polideportivo_id);
+    }
+    
+    if (usuario_id && usuario_id !== '0') {
+      query = query.eq('usuario_id', usuario_id);
+    }
+    
+    const { data: reservas, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error obteniendo reservas:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al obtener reservas' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: reservas || []
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo reservas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Ruta para obtener estadísticas del sistema (super_admin)
+app.get('/api/admin/estadisticas', authenticateToken, verificarEsSuperAdmin, async (req, res) => {
+  try {
+    console.log('📊 Obteniendo estadísticas del sistema');
+    
+    const supabaseClient = getSupabaseClient(req.user);
+    
+    // Obtener estadísticas en paralelo
+    const [
+      usuariosData,
+      reservasData,
+      polideportivosData,
+      pistasData,
+      reservasPorEstado,
+      reservasRecientes
+    ] = await Promise.all([
+      // Total usuarios por rol
+      supabaseClient
+        .from('usuarios')
+        .select('rol, count')
+        .group('rol'),
+      
+      // Total reservas
+      supabaseClient
+        .from('reservas')
+        .select('count'),
+      
+      // Total polideportivos
+      supabaseClient
+        .from('polideportivos')
+        .select('count'),
+      
+      // Total pistas
+      supabaseClient
+        .from('pistas')
+        .select('count'),
+      
+      // Reservas por estado
+      supabaseClient
+        .from('reservas')
+        .select('estado, count')
+        .group('estado'),
+      
+      // Reservas recientes (últimos 7 días)
+      supabaseClient
+        .from('reservas')
+        .select(`
+          *,
+          pistas(nombre),
+          polideportivos(nombre),
+          usuarios:usuario_id(usuario, nombre)
+        `)
+        .gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+        .order('fecha', { ascending: false })
+        .limit(10)
+    ]);
+    
+    const estadisticas = {
+      usuarios: {
+        total: usuariosData.count || 0,
+        porRol: usuariosData.data || []
+      },
+      reservas: {
+        total: reservasData.count || 0,
+        porEstado: reservasPorEstado.data || []
+      },
+      polideportivos: polideportivosData.count || 0,
+      pistas: pistasData.count || 0,
+      reservasRecientes: reservasRecientes.data || []
+    };
+    
+    res.json({
+      success: true,
+      data: estadisticas
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error interno del servidor' 
+    });
+  }
 });
 
 // ========== RUTAS PÚBLICAS (AL FINAL) ==========
@@ -1443,10 +1638,16 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: '✅ Backend funcionando',
+    message: '✅ Backend funcionando COMPLETAMENTE',
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
     secureAuth: true,
+    supabaseConfig: {
+      url: supabaseUrl,
+      hasAnonKey: !!supabaseAnonKey,
+      hasServiceKey: !!supabaseServiceKey,
+      usingServiceKey: !!supabaseServiceKey ? '✅ SI' : '❌ NO'
+    },
     endpoints: {
       auth: '/api/auth/*',
       login: '/api/login (router separado)',
@@ -1465,10 +1666,49 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// TEST SUPABASE
+// TEST SUPABASE CON SERVICE ROLE KEY
+app.get('/api/test-supabase-admin', async (req, res) => {
+  try {
+    console.log('🔐 Probando conexión con Service Role Key...');
+    
+    const { data, error } = await supabaseAdmin
+      .from('usuarios')
+      .select('count')
+      .limit(1);
+
+    if (error) {
+      console.error('❌ Error con Service Role Key:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error conectando con Service Role Key: ' + error.message,
+        config: {
+          hasServiceKey: !!supabaseServiceKey,
+          keyLength: supabaseServiceKey ? supabaseServiceKey.length : 0
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: '✅ Supabase Service Role Key conectada correctamente',
+      config: {
+        hasServiceKey: !!supabaseServiceKey,
+        keyLength: supabaseServiceKey ? supabaseServiceKey.length : 0
+      }
+    });
+  } catch (error) {
+    console.error('Error Supabase Service Key:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error conectando a Supabase con Service Role Key: ' + error.message
+    });
+  }
+});
+
+// TEST SUPABASE PÚBLICO
 app.get('/api/test-supabase', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from('usuarios')
       .select('count')
       .limit(1);
@@ -1477,7 +1717,7 @@ app.get('/api/test-supabase', async (req, res) => {
 
     res.json({
       success: true,
-      message: '✅ Supabase conectado correctamente'
+      message: '✅ Supabase público conectado correctamente'
     });
   } catch (error) {
     console.error('Error Supabase:', error);
@@ -1491,7 +1731,7 @@ app.get('/api/test-supabase', async (req, res) => {
 // POLIDEPORTIVOS
 app.get('/api/polideportivos', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from('polideportivos')
       .select('*')
       .order('nombre');
@@ -1515,7 +1755,7 @@ app.get('/api/pistas', async (req, res) => {
   try {
     const { polideportivo_id } = req.query;
     
-    let query = supabase.from('pistas').select('*');
+    let query = supabasePublic.from('pistas').select('*');
     
     if (polideportivo_id) {
       query = query.eq('polideportivo_id', polideportivo_id);
@@ -1542,22 +1782,24 @@ app.get('/api/pistas', async (req, res) => {
 // Ruta para cambiar estado de mantenimiento de pista
 app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { enMantenimiento } = req.body;
+  const { disponible } = req.body;
   const user = req.user;
 
-  console.log(`🛠️ Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
+  console.log(`🛠️ Cambiando mantenimiento pista ${id}, disponible:`, disponible, 'usuario:', user.rol);
 
   // Validar que el campo es booleano
-  if (typeof enMantenimiento !== 'boolean') {
+  if (typeof disponible !== 'boolean') {
     return res.status(400).json({ 
       success: false,
-      error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
+      error: 'El campo disponible debe ser un valor booleano (true/false)' 
     });
   }
 
   try {
+    const supabaseClient = getSupabaseClient(user);
+    
     // Verificar que la pista existe
-    let query = supabase
+    let query = supabaseClient
       .from('pistas')
       .select('id, polideportivo_id, nombre, disponible')
       .eq('id', id);
@@ -1577,11 +1819,11 @@ app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => 
       });
     }
 
-    console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: enMantenimiento = ${enMantenimiento}`);
+    console.log(`ℹ️ Pista actual estado: disponible = ${pista.disponible}, recibido: disponible = ${disponible}`);
 
-    // Lógica: Si enMantenimiento = true → poner en mantenimiento → disponible = false
-    // Si enMantenimiento = false → quitar mantenimiento → disponible = true
-    const nuevoDisponible = !enMantenimiento;
+    // Lógica: Si disponible = true → poner en mantenimiento → disponible = false
+    // Si disponible = false → quitar mantenimiento → disponible = true
+    const nuevoDisponible = !disponible;
 
     const updateData = { 
       disponible: nuevoDisponible,
@@ -1589,7 +1831,7 @@ app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => 
     };
 
     // Actualizar estado en la base de datos
-    const { data: pistaActualizada, error: updateError } = await supabase
+    const { data: pistaActualizada, error: updateError } = await supabaseClient
       .from('pistas')
       .update(updateData)
       .eq('id', id)
@@ -1610,7 +1852,7 @@ app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => 
     // Si no se devolvió data, obtener la pista actualizada por separado
     if (!pistaActualizada || pistaActualizada.length === 0) {
       // Obtener la pista actualizada
-      const { data: pistaActual, error: getError } = await supabase
+      const { data: pistaActual, error: getError } = await supabaseClient
         .from('pistas')
         .select(`
           *,
@@ -1649,8 +1891,8 @@ app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => 
     res.json({
       success: true,
       data: respuesta,
-      enMantenimiento: !respuesta.disponible,
-      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+      disponible: !respuesta.disponible,
+      message: `Pista ${disponible ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
     });
 
   } catch (error) {
@@ -1665,22 +1907,24 @@ app.put('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => 
 // Ruta PATCH para compatibilidad
 app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { enMantenimiento } = req.body;
+  const { disponible } = req.body;
   const user = req.user;
 
-  console.log(`🛠️ (PATCH) Cambiando mantenimiento pista ${id}, enMantenimiento:`, enMantenimiento, 'usuario:', user.rol);
+  console.log(`🛠️ (PATCH) Cambiando mantenimiento pista ${id}, disponible:`, disponible, 'usuario:', user.rol);
 
   // Validar que el campo es booleano
-  if (typeof enMantenimiento !== 'boolean') {
+  if (typeof disponible !== 'boolean') {
     return res.status(400).json({ 
       success: false,
-      error: 'El campo enMantenimiento debe ser un valor booleano (true/false)' 
+      error: 'El campo disponible debe ser un valor booleano (true/false)' 
     });
   }
 
   try {
+    const supabaseClient = getSupabaseClient(user);
+    
     // Verificar que la pista existe
-    let query = supabase
+    let query = supabaseClient
       .from('pistas')
       .select('id, polideportivo_id, nombre, disponible')
       .eq('id', id);
@@ -1700,9 +1944,9 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
       });
     }
 
-    // Lógica: Si enMantenimiento = true → poner en mantenimiento → disponible = false
-    // Si enMantenimiento = false → quitar mantenimiento → disponible = true
-    const nuevoDisponible = !enMantenimiento;
+    // Lógica: Si disponible = true → poner en mantenimiento → disponible = false
+    // Si disponible = false → quitar mantenimiento → disponible = true
+    const nuevoDisponible = !disponible;
 
     const updateData = { 
       disponible: nuevoDisponible,
@@ -1710,7 +1954,7 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
     };
 
     // Actualizar estado en la base de datos
-    const { data: pistaActualizada, error: updateError } = await supabase
+    const { data: pistaActualizada, error: updateError } = await supabaseClient
       .from('pistas')
       .update(updateData)
       .eq('id', id)
@@ -1730,7 +1974,7 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
     // Si no se devolvió data, obtener la pista actualizada por separado
     if (!pistaActualizada || pistaActualizada.length === 0) {
       // Obtener la pista actualizada
-      const { data: pistaActual, error: getError } = await supabase
+      const { data: pistaActual, error: getError } = await supabaseClient
         .from('pistas')
         .select(`
           *,
@@ -1769,8 +2013,8 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
     res.json({
       success: true,
       data: respuesta,
-      enMantenimiento: !respuesta.disponible,
-      message: `Pista ${enMantenimiento ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
+      disponible: !respuesta.disponible,
+      message: `Pista ${disponible ? 'puesta en mantenimiento' : 'reactivada'} correctamente`
     });
 
   } catch (error) {
@@ -1781,6 +2025,7 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
     });
   }
 });
+
 // ========== REGISTRO ==========
 app.post('/api/registro', async (req, res) => {
   try {
@@ -1839,7 +2084,7 @@ app.post('/api/registro', async (req, res) => {
     const rol = ROLES.USUARIO;
 
     // Verificar duplicados
-    const { data: existingUsers, error: errorCheck } = await supabase
+    const { data: existingUsers, error: errorCheck } = await supabasePublic
       .from('usuarios')
       .select('usuario, correo, dni')
       .or(`usuario.eq.${usuario},correo.eq.${correo},dni.eq.${dni}`);
@@ -1885,7 +2130,7 @@ app.post('/api/registro', async (req, res) => {
       datosUsuario.telefono = telefonoLimpio;
     }
 
-    const { data: newUser, error: errorInsert } = await supabase
+    const { data: newUser, error: errorInsert } = await supabasePublic
       .from('usuarios')
       .insert([datosUsuario])
       .select(`
@@ -1971,6 +2216,10 @@ app.listen(PORT, () => {
   console.log(`🔐 Sistema de autenticación segura ACTIVADO`);
   console.log(`📧 EmailJS: v5.0.2 configurado`);
   console.log(`🌐 Supabase: ${supabaseUrl}`);
+  console.log(`🔑 Claves Supabase configuradas:`);
+  console.log(`   • Anon Key (pública): ${supabaseAnonKey ? '✅ CONFIGURADA' : '❌ NO CONFIGURADA'}`);
+  console.log(`   • Service Role Key: ${supabaseServiceKey ? '✅ CONFIGURADA EN RAILWAY' : '❌ NO CONFIGURADA'}`);
+  console.log(`   • Usando Service Key: ${supabaseServiceKey ? '✅ SÍ' : '❌ NO'}`);
   console.log(`🔑 Sistema de recuperación de contraseñas ACTIVADO`);
   console.log(`🔑 Sistema de roles jerárquicos ACTIVADO`);
   console.log(`   • ${ROLES.SUPER_ADMIN} (nivel ${NIVELES_PERMISO[ROLES.SUPER_ADMIN]})`);
@@ -1980,7 +2229,7 @@ app.listen(PORT, () => {
   console.log(`🔑 Endpoints principales:`);
   console.log(`   • Login tradicional: /api/login (router separado)`);
   console.log(`   • Auth: /api/auth/login, /api/auth/verify, /api/auth/refresh, /api/auth/logout`);
-  console.log(`   • Usuarios: /api/usuarios/* ✅ AHORA REGISTRADO`);
+  console.log(`   • Usuarios: /api/usuarios/* ✅ REGISTRADO`);
   console.log(`   • Reservas: /api/reservas/*`);
   console.log(`   • Polideportivos: /api/polideportivos`);
   console.log(`   • Pistas: /api/pistas`);
@@ -1992,10 +2241,12 @@ app.listen(PORT, () => {
   console.log(`      - POST /api/recupera/reenviar-codigo`);
   console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
   console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
+  console.log(`   • Estadísticas: /api/admin/estadisticas (super_admin)`);
   console.log(`🌐 Health: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth Health: http://localhost:${PORT}/api/auth/health`);
   console.log(`🔑 Recuperación Health: http://localhost:${PORT}/api/recupera/health`);
   console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
+  console.log(`🔐 Test Service Key: http://localhost:${PORT}/api/test-supabase-admin`);
 });
 
 process.on('SIGINT', () => {
