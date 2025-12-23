@@ -4,34 +4,6 @@ const router = express.Router();
 // Importar middlewares y roles desde usuarios
 const { verificarRol, filtrarPorPolideportivo, ROLES, NIVELES_PERMISO } = require('./usuarios');
 
-// Middleware de autenticación (si no está importado de server)
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ 
-      success: false,
-      error: 'Token de autenticación requerido' 
-    });
-  }
-
-  const jwt = require('jsonwebtoken');
-  const JWT_SECRET = process.env.JWT_SECRET || 'mi_clave_secreta_jwt_2024_segura';
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ 
-        success: false,
-        error: 'Token inválido o expirado' 
-      });
-    }
-    
-    req.user = user;
-    next();
-  });
-};
-
 // ============================================
 // RUTAS PÚBLICAS (sin autenticación)
 // ============================================
@@ -47,7 +19,7 @@ router.get('/', async (req, res) => {
       .order('nombre');
 
     if (error) {
-      console.error('Error al obtener polideportivos:', error);
+      console.error('❌ Error al obtener polideportivos:', error);
       return res.status(500).json({ 
         success: false,
         error: 'Error al obtener polideportivos' 
@@ -59,7 +31,7 @@ router.get('/', async (req, res) => {
       data: polideportivos
     });
   } catch (error) {
-    console.error('Error al obtener polideportivos:', error);
+    console.error('❌ Error al obtener polideportivos:', error);
     return res.status(500).json({ 
       success: false,
       error: 'Error al obtener polideportivos' 
@@ -80,7 +52,7 @@ router.get('/:id', async (req, res) => {
       .single();
 
     if (error) {
-      console.error('Error al obtener polideportivo:', error);
+      console.error('❌ Error al obtener polideportivo:', error);
       return res.status(500).json({ 
         success: false,
         error: 'Error al obtener polideportivo' 
@@ -99,7 +71,7 @@ router.get('/:id', async (req, res) => {
       data: polideportivo
     });
   } catch (error) {
-    console.error('Error al obtener polideportivo:', error);
+    console.error('❌ Error al obtener polideportivo:', error);
     return res.status(500).json({ 
       success: false,
       error: 'Error al obtener polideportivo' 
@@ -123,7 +95,7 @@ router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, r
     });
   }
 
-  console.log(`🏢 Creando polideportivo por super_admin ${req.user?.id}:`, { nombre });
+  console.log(`🏢 [POST] Creando polideportivo por super_admin ${req.user?.id}:`, { nombre });
 
   try {
     // Verificar si ya existe un polideportivo con el mismo nombre
@@ -152,7 +124,7 @@ router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, r
       .single();
 
     if (insertError) {
-      console.error('Error al crear polideportivo:', insertError);
+      console.error('❌ Error al crear polideportivo:', insertError);
       return res.status(500).json({ 
         success: false,
         error: 'Error al crear polideportivo' 
@@ -168,7 +140,7 @@ router.post('/', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, r
     });
 
   } catch (error) {
-    console.error('Error al crear polideportivo:', error);
+    console.error('❌ Error al crear polideportivo:', error);
     return res.status(500).json({ 
       success: false,
       error: 'Error al crear polideportivo' 
@@ -189,7 +161,7 @@ router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req,
     });
   }
 
-  console.log(`🔄 Actualizando polideportivo ${id} por super_admin ${req.user?.id}`);
+  console.log(`🔄 [PUT] Actualizando polideportivo ${id} por super_admin ${req.user?.id}`);
 
   try {
     // Verificar que el polideportivo existe
@@ -235,7 +207,7 @@ router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req,
       .single();
 
     if (updateError) {
-      console.error('Error al actualizar polideportivo:', updateError);
+      console.error('❌ Error al actualizar polideportivo:', updateError);
       return res.status(500).json({ 
         success: false,
         error: 'Error al actualizar polideportivo' 
@@ -251,7 +223,7 @@ router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req,
     });
 
   } catch (error) {
-    console.error('Error al actualizar polideportivo:', error);
+    console.error('❌ Error al actualizar polideportivo:', error);
     return res.status(500).json({ 
       success: false,
       error: 'Error al actualizar polideportivo' 
@@ -259,15 +231,21 @@ router.put('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req,
   }
 });
 
-// Eliminar polideportivo (solo super_admin)
+// ✅ CORREGIDA: Eliminar polideportivo (solo super_admin) - CON LOGGING DETALLADO
 router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (req, res) => {
   const { id } = req.params;
   const supabase = req.app.get('supabase');
 
-  console.log(`🗑️ Eliminando polideportivo ${id} por super_admin ${req.user?.id}`);
+  console.log(`=== 🗑️ [DELETE] SOLICITUD ELIMINAR POLIDEPORTIVO ===`);
+  console.log(`📋 ID Polideportivo: ${id}`);
+  console.log(`👤 Usuario ID: ${req.user?.id}`);
+  console.log(`👑 Rol Usuario: ${req.user?.rol}`);
+  console.log(`📧 Email Usuario: ${req.user?.correo}`);
+  console.log(`🔑 Headers Auth: ${req.headers['authorization']?.substring(0, 20)}...`);
 
   try {
-    // Verificar que el polideportivo existe
+    // 1. Verificar que el polideportivo existe
+    console.log(`🔍 Verificando existencia del polideportivo ${id}...`);
     const { data: polideportivo, error: checkError } = await supabase
       .from('polideportivos')
       .select('id, nombre')
@@ -275,20 +253,24 @@ router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (r
       .single();
 
     if (checkError || !polideportivo) {
+      console.error(`❌ Polideportivo ${id} no encontrado en BD. Error:`, checkError);
       return res.status(404).json({ 
         success: false,
         error: 'Polideportivo no encontrado' 
       });
     }
 
-    // Verificar si hay pistas asociadas a este polideportivo
+    console.log(`✅ Polideportivo encontrado: ${polideportivo.nombre} (ID: ${polideportivo.id})`);
+
+    // 2. Verificar si hay pistas asociadas a este polideportivo
+    console.log(`🔍 Verificando pistas asociadas al polideportivo ${id}...`);
     const { data: pistas, error: pistasError } = await supabase
       .from('pistas')
       .select('id, nombre')
       .eq('polideportivo_id', id);
 
     if (pistasError) {
-      console.error('Error al verificar pistas asociadas:', pistasError);
+      console.error('❌ Error al verificar pistas asociadas:', pistasError);
       return res.status(500).json({ 
         success: false,
         error: 'Error al verificar pistas asociadas' 
@@ -297,21 +279,25 @@ router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (r
 
     if (pistas && pistas.length > 0) {
       const pistasNombres = pistas.map(p => p.nombre).join(', ');
+      console.error(`❌ NO se puede eliminar: ${pistas.length} pistas asociadas encontradas:`, pistasNombres);
       return res.status(409).json({ 
         success: false,
         error: `No se puede eliminar el polideportivo porque tiene ${pistas.length} pista(s) asociada(s): ${pistasNombres}. Elimine primero las pistas.` 
       });
     }
 
-    // Verificar si hay administradores asignados a este polideportivo
+    console.log(`✅ No hay pistas asociadas al polideportivo ${id}`);
+
+    // 3. Verificar si hay administradores asignados a este polideportivo
+    console.log(`🔍 Verificando administradores asignados al polideportivo ${id}...`);
     const { data: adminsAsignados, error: adminsError } = await supabase
       .from('usuarios')
-      .select('id, nombre, usuario')
+      .select('id, nombre, usuario, correo')
       .eq('polideportivo_id', id)
       .eq('rol', ROLES.ADMIN_POLIDEPORTIVO);
 
     if (adminsError) {
-      console.error('Error al verificar administradores:', adminsError);
+      console.error('❌ Error al verificar administradores:', adminsError);
       return res.status(500).json({ 
         success: false,
         error: 'Error al verificar administradores asignados' 
@@ -320,39 +306,90 @@ router.delete('/:id', verificarRol(NIVELES_PERMISO[ROLES.SUPER_ADMIN]), async (r
 
     if (adminsAsignados && adminsAsignados.length > 0) {
       const adminsNombres = adminsAsignados.map(a => a.nombre || a.usuario).join(', ');
+      console.error(`❌ NO se puede eliminar: ${adminsAsignados.length} administradores asignados encontrados:`, adminsNombres);
       return res.status(409).json({ 
         success: false,
         error: `No se puede eliminar el polideportivo porque tiene ${adminsAsignados.length} administrador(es) asignado(s): ${adminsNombres}. Reasigne primero los administradores.` 
       });
     }
 
-    // Eliminar polideportivo
-    const { error: deleteError } = await supabase
+    console.log(`✅ No hay administradores asignados al polideportivo ${id}`);
+
+    // 4. Eliminar polideportivo - VERSIÓN ROBUSTA
+    console.log(`🚀 Iniciando eliminación del polideportivo ${id}...`);
+    
+    // Primero, obtener todos los datos del polideportivo para logging
+    const { data: poliCompleto, error: fetchError } = await supabase
       .from('polideportivos')
-      .delete()
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (!fetchError && poliCompleto) {
+      console.log(`📊 Datos completos del polideportivo a eliminar:`, poliCompleto);
+    }
+
+    // Intento de eliminación
+    const { error: deleteError, count } = await supabase
+      .from('polideportivos')
+      .delete({ count: 'exact' })
       .eq('id', id);
 
     if (deleteError) {
-      console.error('Error al eliminar polideportivo:', deleteError);
+      console.error(`❌ ERROR CRÍTICO al eliminar polideportivo en Supabase:`, deleteError);
+      console.error(`🔧 Detalles del error:`, {
+        code: deleteError.code,
+        message: deleteError.message,
+        details: deleteError.details,
+        hint: deleteError.hint
+      });
+      
       return res.status(500).json({ 
         success: false,
-        error: 'Error al eliminar polideportivo' 
+        error: `Error al eliminar polideportivo: ${deleteError.message || 'Error de base de datos'}`,
+        details: deleteError.details,
+        code: deleteError.code
       });
     }
 
-    console.log(`✅ Polideportivo eliminado: ${id} - ${polideportivo.nombre}`);
+    console.log(`✅ ELIMINACIÓN EXITOSA: Polideportivo eliminado de la BD`);
+    console.log(`📊 Resultado: ${count || 1} fila(s) afectada(s)`);
+    console.log(`🗑️ Polideportivo eliminado: ${id} - ${polideportivo.nombre}`);
+
+    // 5. Verificar que realmente se eliminó
+    console.log(`🔍 Verificando que el polideportivo ya no existe...`);
+    const { data: verificacion, error: verifyError } = await supabase
+      .from('polideportivos')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (!verifyError && verificacion) {
+      console.error(`⚠️ ADVERTENCIA: El polideportivo ${id} sigue existiendo después de la eliminación`);
+    } else {
+      console.log(`✅ Verificación OK: Polideportivo ${id} correctamente eliminado`);
+    }
 
     res.json({ 
       success: true,
       message: 'Polideportivo eliminado correctamente',
-      data: { id, nombre: polideportivo.nombre }
+      data: { 
+        id, 
+        nombre: polideportivo.nombre,
+        timestamp: new Date().toISOString(),
+        deleted_by: req.user?.id
+      }
     });
 
   } catch (error) {
-    console.error('Error al eliminar polideportivo:', error);
+    console.error('❌ ERROR GENERAL en ruta DELETE /polideportivos/:id:', error);
+    console.error('🔧 Stack trace:', error.stack);
+    
     return res.status(500).json({ 
       success: false,
-      error: 'Error al eliminar polideportivo' 
+      error: 'Error interno del servidor al eliminar polideportivo',
+      internal_error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
@@ -388,9 +425,7 @@ router.get('/mi-polideportivo', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEP
       .from('polideportivos')
       .select(`
         *,
-        pistas (id, nombre, tipo, precio, disponible),
-        reservas!inner(count),
-        usuarios!inner(count)  # Para contar admins asignados
+        pistas (id, nombre, tipo, precio, disponible)
       `)
       .eq('id', adminData.polideportivo_id)
       .single();
@@ -403,9 +438,15 @@ router.get('/mi-polideportivo', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEP
       });
     }
 
-    // Contar reservas activas (pendientes y confirmadas) para hoy
+    // Contar reservas
+    const { count: totalReservas, error: reservasError } = await supabase
+      .from('reservas')
+      .select('*', { count: 'exact', head: true })
+      .eq('polideportivo_id', polideportivo.id);
+
+    // Contar reservas activas para hoy
     const hoy = new Date().toISOString().split('T')[0];
-    const { count: reservasHoy, error: reservasError } = await supabase
+    const { count: reservasHoy, error: reservasHoyError } = await supabase
       .from('reservas')
       .select('*', { count: 'exact', head: true })
       .eq('polideportivo_id', polideportivo.id)
@@ -419,12 +460,19 @@ router.get('/mi-polideportivo', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEP
       .eq('polideportivo_id', polideportivo.id)
       .eq('disponible', true);
 
+    // Contar administradores asignados
+    const { count: totalAdmins, error: adminsError } = await supabase
+      .from('usuarios')
+      .select('*', { count: 'exact', head: true })
+      .eq('polideportivo_id', polideportivo.id)
+      .eq('rol', ROLES.ADMIN_POLIDEPORTIVO);
+
     const estadisticas = {
       total_pistas: polideportivo.pistas?.length || 0,
       pistas_disponibles: pistasDisponibles || 0,
-      total_reservas: polideportivo.reservas?.[0]?.count || 0,
+      total_reservas: totalReservas || 0,
       reservas_hoy: reservasHoy || 0,
-      total_admins: polideportivo.usuarios?.[0]?.count || 0
+      total_admins: totalAdmins || 0
     };
 
     // Formatear respuesta
@@ -433,10 +481,6 @@ router.get('/mi-polideportivo', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEP
       pistas: polideportivo.pistas || [],
       estadisticas
     };
-
-    // Eliminar campos de conteo para limpiar la respuesta
-    delete respuesta.reservas;
-    delete respuesta.usuarios;
 
     res.json({
       success: true,
@@ -604,6 +648,87 @@ router.get('/mi-polideportivo/estadisticas', verificarRol(NIVELES_PERMISO[ROLES.
     return res.status(500).json({ 
       success: false,
       error: 'Error al obtener estadísticas' 
+    });
+  }
+});
+
+// ============================================
+// RUTA PARA OBTENER POLIDEPORTIVOS CON ESTADÍSTICAS (para admin/super_admin)
+// ============================================
+
+router.get('/con-estadisticas', verificarRol(NIVELES_PERMISO[ROLES.ADMIN_POLIDEPORTIVO]), async (req, res) => {
+  const supabase = req.app.get('supabase');
+  const usuario = req.user;
+
+  try {
+    let query = supabase
+      .from('polideportivos')
+      .select('*');
+
+    // Si no es super_admin, filtrar por su polideportivo asignado
+    if (usuario.rol !== ROLES.SUPER_ADMIN) {
+      query = query.eq('id', usuario.polideportivo_id);
+    }
+
+    const { data: polideportivos, error } = await query.order('nombre');
+
+    if (error) {
+      console.error('Error al obtener polideportivos:', error);
+      return res.status(500).json({ 
+        success: false,
+        error: 'Error al obtener polideportivos' 
+      });
+    }
+
+    // Para cada polideportivo, obtener estadísticas
+    const polideportivosConEstadisticas = await Promise.all(
+      polideportivos.map(async (poli) => {
+        // Contar pistas
+        const { count: totalPistas, error: pistasError } = await supabase
+          .from('pistas')
+          .select('*', { count: 'exact', head: true })
+          .eq('polideportivo_id', poli.id);
+
+        // Contar pistas disponibles
+        const { count: pistasDisponibles, error: disponiblesError } = await supabase
+          .from('pistas')
+          .select('*', { count: 'exact', head: true })
+          .eq('polideportivo_id', poli.id)
+          .eq('disponible', true);
+
+        // Contar reservas del mes actual
+        const hoy = new Date();
+        const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+        const ultimoDiaMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
+        
+        const { count: reservasMes, error: reservasError } = await supabase
+          .from('reservas')
+          .select('*', { count: 'exact', head: true })
+          .eq('polideportivo_id', poli.id)
+          .gte('fecha', primerDiaMes.toISOString().split('T')[0])
+          .lte('fecha', ultimoDiaMes.toISOString().split('T')[0]);
+
+        return {
+          ...poli,
+          estadisticas: {
+            total_pistas: totalPistas || 0,
+            pistas_disponibles: pistasDisponibles || 0,
+            reservas_mes_actual: reservasMes || 0
+          }
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: polideportivosConEstadisticas
+    });
+
+  } catch (error) {
+    console.error('Error al obtener polideportivos con estadísticas:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener polideportivos' 
     });
   }
 });
