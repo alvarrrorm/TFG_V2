@@ -290,8 +290,9 @@ function getSupabaseClient(user = null) {
     return supabasePublic; // Usuario no autenticado
   }
   
-  // Administradores obtienen el cliente con Service Role Key
+  // PARA ADMINISTRADORES: Usar cliente que NO usa autenticación JWT (evita RLS)
   if (user.rol === ROLES.SUPER_ADMIN || user.rol === ROLES.ADMIN || user.rol === ROLES.ADMIN_POLIDEPORTIVO) {
+    // Usar Service Role Key directamente - ESTO IGNORA RLS COMPLETAMENTE
     return supabaseAdmin;
   }
   
@@ -1487,7 +1488,7 @@ app.get('/api/admin/health', authenticateToken, verificarEsAdmin, (req, res) => 
 
 // ========== RUTAS ESPECÍFICAS PARA MANTENIMIENTO DE PISTAS ==========
 
-// ✅ NUEVA RUTA: Actualizar pista (para cambiar disponible y otros campos)
+// ✅ RUTA ACTUALIZADA: Actualizar pista (para cambiar disponible y otros campos)
 app.put('/api/pistas/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { disponible, nombre, tipo, precio, descripcion } = req.body;
@@ -1563,54 +1564,41 @@ app.put('/api/pistas/:id', authenticateToken, async (req, res) => {
     
     updateData.updated_at = new Date().toISOString();
 
-    // 3. Actualizar pista con manejo de error PGRST116
-    const { data: pistaActualizada, error: updateError } = await supabaseClient
+    // 3. Actualizar pista SIN SELECT para evitar el error PGRST116
+    const { error: updateError } = await supabaseClient
       .from('pistas')
       .update(updateData)
-      .eq('id', id)
-      .select('*, polideportivos:polideportivo_id (nombre, direccion)')
-      .maybeSingle();
+      .eq('id', id);
 
     if (updateError) {
       console.error('❌ Error al actualizar la pista:', updateError);
-      
-      if (updateError.code === 'PGRST116') {
-        // Intentar obtener la pista después del update
-        const { data: pistaActual, error: getError } = await supabaseClient
-          .from('pistas')
-          .select('*, polideportivos:polideportivo_id (nombre, direccion)')
-          .eq('id', id)
-          .maybeSingle();
-          
-        if (getError || !pistaActual) {
-          return res.status(404).json({ 
-            success: false,
-            error: 'Pista no encontrada después de la actualización' 
-          });
-        }
-        
-        return res.json({
-          success: true,
-          data: pistaActual,
-          message: 'Pista actualizada correctamente'
-        });
-      }
-      
       return res.status(500).json({ 
         success: false,
         error: 'Error al actualizar la pista: ' + updateError.message 
       });
     }
 
+    // 4. Obtener los datos actualizados de la pista en una consulta separada
+    const { data: pistaActualizada, error: getError } = await supabaseClient
+      .from('pistas')
+      .select('*, polideportivos:polideportivo_id (nombre, direccion)')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (getError) {
+      console.warn('⚠️  No se pudo obtener datos actualizados de la pista:', getError);
+      // No fallamos si no podemos obtener los datos actualizados
+    }
+
     console.log(`✅ Pista actualizada:`, pistaActualizada?.nombre || id);
 
-    // 4. Formatear respuesta
+    // 5. Formatear respuesta (usar datos actualizados o los originales si no se pudieron obtener)
     const respuesta = {
       id: pistaActualizada?.id || id,
-      nombre: pistaActualizada?.nombre || pista.nombre,
-      tipo: pistaActualizada?.tipo || pista.tipo,
-      precio: pistaActualizada?.precio ? parseFloat(pistaActualizada.precio) : pista.precio,
-      descripcion: pistaActualizada?.descripcion || pista.descripcion,
+      nombre: pistaActualizada?.nombre || nombre || pista.nombre,
+      tipo: pistaActualizada?.tipo || tipo || pista.tipo,
+      precio: pistaActualizada?.precio ? parseFloat(pistaActualizada.precio) : precio || pista.precio,
+      descripcion: pistaActualizada?.descripcion || descripcion || pista.descripcion,
       polideportivo_id: pistaActualizada?.polideportivo_id || pista.polideportivo_id,
       polideportivo_nombre: pistaActualizada?.polideportivos?.nombre,
       polideportivo_direccion: pistaActualizada?.polideportivos?.direccion,
@@ -1654,7 +1642,7 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
     
     let query = supabaseClient
       .from('pistas')
-      .select('id, polideportivo_id, nombre')
+      .select('id, polideportivo_id, nombre, disponible, tipo, precio, descripcion, created_at')
       .eq('id', id);
 
     if (user.rol === ROLES.ADMIN_POLIDEPORTIVO && user.polideportivo_id) {
@@ -1671,15 +1659,14 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
       });
     }
 
-    const { data: pistaActualizada, error: updateError } = await supabaseClient
+    // Actualizar SIN SELECT
+    const { error: updateError } = await supabaseClient
       .from('pistas')
       .update({ 
         disponible: disponible,
         updated_at: new Date().toISOString()
       })
-      .eq('id', id)
-      .select('*, polideportivos:polideportivo_id (nombre, direccion)')
-      .maybeSingle();
+      .eq('id', id);
 
     if (updateError) {
       console.error('❌ Error al actualizar estado:', updateError);
@@ -1688,6 +1675,13 @@ app.patch('/api/pistas/:id/mantenimiento', authenticateToken, async (req, res) =
         error: 'Error al actualizar estado: ' + updateError.message 
       });
     }
+
+    // Obtener datos actualizados si es posible
+    const { data: pistaActualizada, error: getError } = await supabaseClient
+      .from('pistas')
+      .select('*, polideportivos:polideportivo_id (nombre, direccion)')
+      .eq('id', id)
+      .maybeSingle();
 
     const respuesta = {
       id: pistaActualizada?.id || id,
