@@ -1365,6 +1365,29 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
+    // 🎯 Obtener hora actual del servidor (UTC)
+    const ahoraServidor = new Date();
+    console.log('⏰ Hora actual del servidor:', ahoraServidor.toISOString());
+    
+    const { error: updateError } = await supabase
+      .from('reservas')
+      .update({ 
+        estado: 'confirmada',
+        fecha_confirmacion: ahoraServidor.toISOString()
+      })
+      .eq('id', reservaId);
+
+    if (updateError) {
+      console.error('❌ Error actualizando reserva:', updateError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error interno del servidor' 
+      });
+    }
+
+    console.log('✅ Estado de reserva actualizado a: confirmada');
+    console.log('📅 Fecha de confirmación guardada:', ahoraServidor.toISOString());
+
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
     
@@ -1388,24 +1411,6 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
         console.log('⚠️  Usuario no encontrado o sin email');
       }
     }
-
-    const { error: updateError } = await supabase
-      .from('reservas')
-      .update({ 
-        estado: 'confirmada',
-        fecha_confirmacion: new Date().toISOString()
-      })
-      .eq('id', reservaId);
-
-    if (updateError) {
-      console.error('❌ Error actualizando reserva:', updateError);
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Error interno del servidor' 
-      });
-    }
-
-    console.log('✅ Estado de reserva actualizado a: confirmada');
 
     let emailEnviado = false;
     let mensajeEmail = '';
@@ -1553,11 +1558,15 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
+    // 🎯 Obtener hora actual del servidor
+    const ahoraServidor = new Date();
+    console.log('⏰ [POST] Hora actual del servidor:', ahoraServidor.toISOString());
+    
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
         estado: 'confirmada',
-        fecha_confirmacion: new Date().toISOString()
+        fecha_confirmacion: ahoraServidor.toISOString()
       })
       .eq('id', reservaId);
 
@@ -1570,6 +1579,7 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ [POST] Estado de reserva actualizado a: confirmada');
+    console.log('📅 Fecha de confirmación guardada:', ahoraServidor.toISOString());
 
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
@@ -1708,11 +1718,17 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Reserva no encontrada o no tienes permisos para cancelarla' });
     }
 
+    // 🎯 Obtener hora actual del servidor
+    const ahoraServidor = new Date();
+    console.log('⏰ Hora de cancelación:', ahoraServidor.toISOString());
+    
     const { error: updateError } = await supabase
       .from('reservas')
-      .update({ estado: 'cancelada' })
-      .eq('id', id)
-      .eq('estado', 'pendiente');
+      .update({ 
+        estado: 'cancelada',
+        fecha_modificacion: ahoraServidor.toISOString()
+      })
+      .eq('id', id);
 
     if (updateError) {
       console.error('❌ Error al cancelar reserva:', updateError);
@@ -1726,7 +1742,8 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
       ludoteca: reserva.ludoteca || false,
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
-      polideportivo_nombre: reserva.polideportivos?.nombre
+      polideportivo_nombre: reserva.polideportivos?.nombre,
+      fecha_modificacion: ahoraServidor.toISOString()
     };
 
     res.json({ 
@@ -2069,6 +2086,9 @@ router.put('/:id', authenticateToken, async (req, res) => {
       updateData.ludoteca = ludoteca;
     }
 
+    // 🎯 Agregar fecha de modificación actual
+    updateData.fecha_modificacion = new Date().toISOString();
+
     if (Object.keys(updateData).length === 0) {
       console.log('❌ No hay campos para actualizar');
       return res.status(400).json({ success: false, error: 'No hay campos para actualizar' });
@@ -2093,6 +2113,15 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ Reserva actualizada en BD. ID:', reservaActualizada.id);
+    console.log('📊 Datos actualizados:', {
+      pista_id: reservaActualizada.pista_id,
+      fecha: reservaActualizada.fecha,
+      hora_inicio: reservaActualizada.hora_inicio,
+      hora_fin: reservaActualizada.hora_fin,
+      precio: reservaActualizada.precio,
+      ludoteca: reservaActualizada.ludoteca,
+      fecha_modificacion: reservaActualizada.fecha_modificacion
+    });
 
     const reservaConLudoteca = {
       ...reservaActualizada,
