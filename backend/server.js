@@ -2225,6 +2225,9 @@ app.listen(PORT, () => {
   console.log(`🔑 Recuperación Health: http://localhost:${PORT}/api/recupera/health`);
   console.log(`👑 Admin Health: http://localhost:${PORT}/api/admin/health`);
   console.log(`🔐 Test Service Key: http://localhost:${PORT}/api/test-supabase-admin`);
+console.log('🌍 Zona horaria configurada:', process.env.TZ);
+console.log('🕒 Hora del servidor:', new Date().toString());
+console.log('📅 ISO:', new Date().toISOString());
 });
 
 process.on('SIGINT', () => {
