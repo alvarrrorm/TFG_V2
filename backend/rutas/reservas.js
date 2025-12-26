@@ -52,6 +52,32 @@ const emailjsConfig = {
 const emailjsPublicKey = 'cm8peTJ9deE4bwUrS';
 const emailjsPrivateKey = 'Td3FXR8CwPdKsuyIuwPF_';
 
+// 👇 FUNCIÓN PARA OBTENER FECHA/HORA LOCAL CORRECTA
+const obtenerFechaHoraLocal = () => {
+  try {
+    // Obtener la fecha/hora actual
+    const ahora = new Date();
+    
+    // Método 1: Usar la hora local del servidor (ya debería ser España si el servidor está en ES)
+    // Método 2: Ajustar a zona horaria específica
+    const offsetEspana = 2; // GMT+2 (horario de verano)
+    const ahoraEspana = new Date(ahora.getTime() + (offsetEspana * 60 * 60 * 1000));
+    
+    console.log('⏰ Fecha/hora generada:', {
+      servidorUTC: ahora.toISOString(),
+      servidorLocal: ahora.toLocaleString('es-ES'),
+      espanaAjustada: ahoraEspana.toISOString(),
+      espanaLocal: ahoraEspana.toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })
+    });
+    
+    // Devolver en formato ISO (la BD lo interpretará correctamente)
+    return ahoraEspana.toISOString();
+  } catch (error) {
+    console.error('❌ Error obteniendo fecha local:', error);
+    return new Date().toISOString(); // Fallback
+  }
+};
+
 // 👇 FUNCIÓN REUTILIZABLE PARA FORMATEAR FECHA
 const formatearFecha = (fechaInput) => {
   if (!fechaInput) return null;
@@ -524,6 +550,10 @@ router.post('/', authenticateToken, async (req, res) => {
 
     console.log('💰 Precio calculado:', precioFinal);
 
+    // 🎯 OBTENER FECHA/HORA LOCAL ANTES DE CREAR LA RESERVA
+    const fechaCreacionLocal = obtenerFechaHoraLocal();
+    console.log('⏰ Fecha/hora de creación (local):', fechaCreacionLocal);
+
     const { data: nuevaReserva, error: insertError } = await supabase
       .from('reservas')
       .insert([{
@@ -537,7 +567,9 @@ router.post('/', authenticateToken, async (req, res) => {
         precio: precioFinal,
         estado: estado,
         email_usuario: usuarioEmail,
-        ludoteca: ludoteca
+        ludoteca: ludoteca,
+        // 🎯 AGREGAR TIMESTAMP LOCAL CORRECTO
+        created_at: fechaCreacionLocal
       }])
       .select(`
         *,
@@ -555,6 +587,7 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ Reserva creada con ID:', nuevaReserva.id);
+    console.log('📅 Timestamp guardado:', nuevaReserva.created_at);
 
     const reservaConLudoteca = {
       ...nuevaReserva,
@@ -573,6 +606,7 @@ router.post('/', authenticateToken, async (req, res) => {
     console.log('   Nombre Usuario:', nuevaReserva.nombre_usuario);
     console.log('   Email guardado:', usuarioEmail || 'NO TIENE');
     console.log('   Ludoteca:', ludoteca);
+    console.log('   Creado el:', nuevaReserva.created_at);
 
     res.status(201).json({ 
       success: true, 
@@ -653,7 +687,8 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       id: reservaActual.id,
       estado: reservaActual.estado,
       usuario_id: reservaActual.usuario_id,
-      ludoteca_actual: reservaActual.ludoteca
+      ludoteca_actual: reservaActual.ludoteca,
+      creado_el: reservaActual.created_at
     });
 
     // 3. Validar datos recibidos
@@ -765,7 +800,8 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       hora_fin: horaFin,
       precio: precioFinal,
       ludoteca: ludoteca,
-      fecha_modificacion: new Date().toISOString()
+      // 🎯 AGREGAR FECHA DE MODIFICACIÓN CON HORA LOCAL
+      fecha_modificacion: obtenerFechaHoraLocal()
     };
 
     console.log('🔄 Campos a actualizar:', updateData);
@@ -804,7 +840,8 @@ router.put('/usuario/editar/:id', authenticateToken, async (req, res) => {
       hora_inicio: reservaActualizada.hora_inicio,
       hora_fin: reservaActualizada.hora_fin,
       precio: reservaActualizada.precio,
-      ludoteca: reservaActualizada.ludoteca
+      ludoteca: reservaActualizada.ludoteca,
+      fecha_modificacion: reservaActualizada.fecha_modificacion
     });
 
     const reservaConLudoteca = {
@@ -1066,6 +1103,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ Reserva encontrada:', reserva.id);
+    console.log('📅 Fecha de creación (BD):', reserva.created_at);
 
     const reservaConLudoteca = {
       ...reserva,
@@ -1365,15 +1403,15 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
-    // 🎯 Obtener hora actual del servidor (UTC)
-    const ahoraServidor = new Date();
-    console.log('⏰ Hora actual del servidor:', ahoraServidor.toISOString());
+    // 🎯 Obtener hora actual LOCAL del servidor
+    const ahoraLocal = obtenerFechaHoraLocal();
+    console.log('⏰ Hora actual LOCAL para confirmación:', ahoraLocal);
     
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
         estado: 'confirmada',
-        fecha_confirmacion: ahoraServidor.toISOString()
+        fecha_confirmacion: ahoraLocal
       })
       .eq('id', reservaId);
 
@@ -1386,7 +1424,7 @@ router.put('/:id/confirmar', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ Estado de reserva actualizado a: confirmada');
-    console.log('📅 Fecha de confirmación guardada:', ahoraServidor.toISOString());
+    console.log('📅 Fecha de confirmación guardada (local):', ahoraLocal);
 
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
@@ -1558,15 +1596,15 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
       });
     }
 
-    // 🎯 Obtener hora actual del servidor
-    const ahoraServidor = new Date();
-    console.log('⏰ [POST] Hora actual del servidor:', ahoraServidor.toISOString());
+    // 🎯 Obtener hora actual LOCAL del servidor
+    const ahoraLocal = obtenerFechaHoraLocal();
+    console.log('⏰ [POST] Hora actual LOCAL para confirmación:', ahoraLocal);
     
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
         estado: 'confirmada',
-        fecha_confirmacion: ahoraServidor.toISOString()
+        fecha_confirmacion: ahoraLocal
       })
       .eq('id', reservaId);
 
@@ -1579,7 +1617,7 @@ router.post('/:id/confirmar', authenticateToken, async (req, res) => {
     }
 
     console.log('✅ [POST] Estado de reserva actualizado a: confirmada');
-    console.log('📅 Fecha de confirmación guardada:', ahoraServidor.toISOString());
+    console.log('📅 Fecha de confirmación guardada (local):', ahoraLocal);
 
     let emailParaEnviar = '';
     let nombreParaEmail = reservaCompleta.nombre_usuario;
@@ -1718,15 +1756,15 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Reserva no encontrada o no tienes permisos para cancelarla' });
     }
 
-    // 🎯 Obtener hora actual del servidor
-    const ahoraServidor = new Date();
-    console.log('⏰ Hora de cancelación:', ahoraServidor.toISOString());
+    // 🎯 Obtener hora actual LOCAL del servidor
+    const ahoraLocal = obtenerFechaHoraLocal();
+    console.log('⏰ Hora de cancelación (local):', ahoraLocal);
     
     const { error: updateError } = await supabase
       .from('reservas')
       .update({ 
         estado: 'cancelada',
-        fecha_modificacion: ahoraServidor.toISOString()
+        fecha_modificacion: ahoraLocal
       })
       .eq('id', id);
 
@@ -1743,7 +1781,7 @@ router.put('/:id/cancelar', authenticateToken, async (req, res) => {
       pistaNombre: reserva.pistas?.nombre,
       pistaTipo: reserva.pistas?.tipo,
       polideportivo_nombre: reserva.polideportivos?.nombre,
-      fecha_modificacion: ahoraServidor.toISOString()
+      fecha_modificacion: ahoraLocal
     };
 
     res.json({ 
@@ -2086,8 +2124,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
       updateData.ludoteca = ludoteca;
     }
 
-    // 🎯 Agregar fecha de modificación actual
-    updateData.fecha_modificacion = new Date().toISOString();
+    // 🎯 AGREGAR FECHA DE MODIFICACIÓN CON HORA LOCAL
+    updateData.fecha_modificacion = obtenerFechaHoraLocal();
 
     if (Object.keys(updateData).length === 0) {
       console.log('❌ No hay campos para actualizar');
