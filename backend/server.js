@@ -728,7 +728,7 @@ app.get('/api/recupera/health', (req, res) => {
 
 // ========== RUTAS DE RECUPERACIÓN DE CONTRASEÑA ==========
 
-// Ruta para solicitar recuperación de contraseña
+// Ruta para solicitar recuperación de contraseña (VERSIÓN CORREGIDA)
 app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   try {
     const { email } = req.body;
@@ -756,14 +756,13 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    // Por seguridad, siempre devolvemos el mismo mensaje
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
+    // ✅ MODIFICACIÓN: Verificar si el usuario NO existe
     if (!usuarios || usuarios.length === 0) {
-      console.log('📧 Email no encontrado (por seguridad):', email);
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
+      console.log('📧 Email NO encontrado en el sistema:', email);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'El correo electrónico no está registrado en nuestro sistema',
+        emailNotFound: true
       });
     }
 
@@ -787,7 +786,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       console.error('❌ Error guardando código:', insertError);
       return res.status(500).json({ 
         success: false, 
-        error: 'Error al generar código de recuperación' 
+        error: 'Error al generar el código de recuperación' 
       });
     }
 
@@ -801,7 +800,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       };
 
       // Log de seguridad - quién está solicitando recuperación
-      console.log('👤 USUARIO SOLICITANDO RECUPERACIÓN:', {
+      console.log('📤 ENVIANDO EMAIL A USUARIO REGISTRADO:', {
         id: usuario.id,
         nombre: usuario.nombre,
         usuario: usuario.usuario,
@@ -815,8 +814,8 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: mensajeSeguro,
-        // Solo en desarrollo mostramos info adicional
+        message: 'Se ha enviado un código de verificación a tu correo electrónico',
+        email: usuario.correo,
         debug: process.env.NODE_ENV === 'development' ? {
           usuario: usuario.usuario,
           nombre: usuario.nombre,
@@ -826,10 +825,16 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
       
     } catch (emailError) {
       console.error('❌ Error enviando email de recuperación:', emailError);
+      // Eliminar el código que se guardó si falla el email
+      await supabasePublic
+        .from('recuperacion_password')
+        .delete()
+        .eq('email', email)
+        .eq('codigo', codigo);
+        
       res.status(500).json({ 
         success: false, 
-        error: 'Error al enviar el email de recuperación',
-        // En desarrollo mostramos el código para testing
+        error: 'Error al enviar el email de recuperación. Por favor, intenta nuevamente.',
         debug: process.env.NODE_ENV === 'development' ? {
           codigo: codigo,
           usuario: usuario.usuario
@@ -846,7 +851,7 @@ app.post('/api/recupera/solicitar-recuperacion', async (req, res) => {
   }
 });
 
-// Ruta para reenviar código
+// Ruta para reenviar código (VERSIÓN CORREGIDA)
 app.post('/api/recupera/reenviar-codigo', async (req, res) => {
   try {
     const { email } = req.body;
@@ -874,12 +879,13 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
       });
     }
 
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
+    // ✅ MODIFICACIÓN: Verificar si el usuario NO existe
     if (!usuarios || usuarios.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
+      console.log('📧 Email NO encontrado (reenvío):', email);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'El correo electrónico no está registrado en nuestro sistema',
+        emailNotFound: true
       });
     }
 
@@ -903,7 +909,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
       console.error('❌ Error guardando nuevo código:', insertError);
       return res.status(500).json({ 
         success: false, 
-        error: 'Error al reenviar el código' 
+        error: 'Error al generar el nuevo código' 
       });
     }
 
@@ -916,7 +922,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
         codigo: nuevoCodigo
       };
 
-      console.log('🔄 REENVIO DE CÓDIGO PARA:', {
+      console.log('🔄 REENVIANDO EMAIL A USUARIO REGISTRADO:', {
         usuario: usuario.usuario,
         email: usuario.correo,
         nuevo_codigo: nuevoCodigo
@@ -926,7 +932,7 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: mensajeSeguro,
+        message: 'Se ha reenviado el código de verificación a tu correo electrónico',
         debug: process.env.NODE_ENV === 'development' ? {
           usuario: usuario.usuario,
           codigo: nuevoCodigo
@@ -935,6 +941,14 @@ app.post('/api/recupera/reenviar-codigo', async (req, res) => {
       
     } catch (emailError) {
       console.error('❌ Error reenviando email de recuperación:', emailError);
+      
+      // Eliminar el código que se guardó si falla el email
+      await supabasePublic
+        .from('recuperacion_password')
+        .delete()
+        .eq('email', email)
+        .eq('codigo', nuevoCodigo);
+        
       res.status(500).json({ 
         success: false, 
         error: 'Error al reenviar el email de recuperación',
@@ -2213,10 +2227,10 @@ app.listen(PORT, () => {
   console.log(`   • Pistas: /api/pistas`);
   console.log(`   • Registro: /api/registro`);
   console.log(`   • Recuperación de contraseñas:`);
-  console.log(`      - POST /api/recupera/solicitar-recuperacion`);
+  console.log(`      - POST /api/recupera/solicitar-recuperacion ✅ CORREGIDO (email no existe = 404)`);
   console.log(`      - POST /api/recupera/verificar-codigo`);
   console.log(`      - POST /api/recupera/cambiar-password`);
-  console.log(`      - POST /api/recupera/reenviar-codigo`);
+  console.log(`      - POST /api/recupera/reenviar-codigo ✅ CORREGIDO (email no existe = 404)`);
   console.log(`   • Admin: /api/admin/* (super_admin y admin general)`);
   console.log(`   • Admin Poli: /api/admin-poli/* (admin_poli con polideportivo)`);
   console.log(`   • Estadísticas: /api/admin/estadisticas (super_admin)`);
