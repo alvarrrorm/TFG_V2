@@ -124,14 +124,13 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    // Por seguridad, siempre devolvemos el mismo mensaje
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
+    // ✅ MODIFICACIÓN: Verificar si el usuario NO existe y devolver error específico
     if (!usuarios || usuarios.length === 0) {
-      console.log('📧 Email no encontrado (por seguridad):', email);
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
+      console.log('📧 Email NO encontrado en el sistema:', email);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'El correo electrónico no está registrado en nuestro sistema',
+        emailNotFound: true
       });
     }
 
@@ -153,7 +152,10 @@ router.post('/solicitar-recuperacion', async (req, res) => {
 
     if (insertError) {
       console.error('❌ Error guardando código:', insertError);
-      // Continuamos aunque falle el guardado
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al generar el código de recuperación' 
+      });
     }
 
     // Enviar email de recuperación CON TODA LA INFORMACIÓN DEL USUARIO
@@ -166,7 +168,7 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       };
 
       // Log de seguridad - quién está solicitando recuperación
-      console.log('👤 USUARIO SOLICITANDO RECUPERACIÓN:', {
+      console.log('📤 ENVIANDO EMAIL A USUARIO REGISTRADO:', {
         id: usuario.id,
         nombre: usuario.nombre,
         usuario: usuario.usuario,
@@ -180,8 +182,8 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: mensajeSeguro,
-        // Solo en desarrollo mostramos info adicional
+        message: 'Se ha enviado un código de verificación a tu correo electrónico',
+        email: usuario.correo,
         debug: process.env.NODE_ENV === 'development' ? {
           usuario: usuario.usuario,
           nombre: usuario.nombre,
@@ -191,10 +193,17 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       
     } catch (emailError) {
       console.error('❌ Error enviando email de recuperación:', emailError);
+      
+      // Eliminar el código que se guardó si falla el email
+      await supabase
+        .from('recuperacion_password')
+        .delete()
+        .eq('email', email)
+        .eq('codigo', codigo);
+        
       res.status(500).json({ 
         success: false, 
-        error: 'Error al enviar el email de recuperación',
-        // En desarrollo mostramos el código para testing
+        error: 'Error al enviar el email de recuperación. Por favor, intenta nuevamente.',
         debug: process.env.NODE_ENV === 'development' ? {
           codigo: codigo,
           usuario: usuario.usuario
@@ -241,12 +250,13 @@ router.post('/reenviar-codigo', async (req, res) => {
       });
     }
 
-    const mensajeSeguro = 'Si el email existe en nuestro sistema, recibirás un código de verificación';
-
+    // ✅ MODIFICACIÓN: Verificar si el usuario NO existe
     if (!usuarios || usuarios.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: mensajeSeguro
+      console.log('📧 Email NO encontrado (reenvío):', email);
+      return res.status(404).json({ 
+        success: false, 
+        error: 'El correo electrónico no está registrado en nuestro sistema',
+        emailNotFound: true
       });
     }
 
@@ -268,6 +278,10 @@ router.post('/reenviar-codigo', async (req, res) => {
 
     if (insertError) {
       console.error('❌ Error guardando nuevo código:', insertError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Error al generar el nuevo código' 
+      });
     }
 
     // Enviar NUEVO email de recuperación
@@ -279,7 +293,7 @@ router.post('/reenviar-codigo', async (req, res) => {
         codigo: nuevoCodigo
       };
 
-      console.log('🔄 REENVIO DE CÓDIGO PARA:', {
+      console.log('🔄 REENVIANDO EMAIL A USUARIO REGISTRADO:', {
         usuario: usuario.usuario,
         email: usuario.correo,
         nuevo_codigo: nuevoCodigo
@@ -289,7 +303,7 @@ router.post('/reenviar-codigo', async (req, res) => {
       
       res.json({ 
         success: true, 
-        message: mensajeSeguro,
+        message: 'Se ha reenviado el código de verificación a tu correo electrónico',
         debug: process.env.NODE_ENV === 'development' ? {
           usuario: usuario.usuario,
           codigo: nuevoCodigo
@@ -298,6 +312,14 @@ router.post('/reenviar-codigo', async (req, res) => {
       
     } catch (emailError) {
       console.error('❌ Error reenviando email de recuperación:', emailError);
+      
+      // Eliminar el código que se guardó si falla el email
+      await supabase
+        .from('recuperacion_password')
+        .delete()
+        .eq('email', email)
+        .eq('codigo', nuevoCodigo);
+        
       res.status(500).json({ 
         success: false, 
         error: 'Error al reenviar el email de recuperación',
