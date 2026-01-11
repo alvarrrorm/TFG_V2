@@ -124,7 +124,7 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       });
     }
 
-    // ✅ MODIFICACIÓN: Verificar si el usuario NO existe y devolver error específico
+    // ✅ MODIFICACIÓN IMPORTANTE: Verificar si el usuario NO existe
     if (!usuarios || usuarios.length === 0) {
       console.log('📧 Email NO encontrado en el sistema:', email);
       return res.status(404).json({ 
@@ -193,7 +193,6 @@ router.post('/solicitar-recuperacion', async (req, res) => {
       
     } catch (emailError) {
       console.error('❌ Error enviando email de recuperación:', emailError);
-      
       // Eliminar el código que se guardó si falla el email
       await supabase
         .from('recuperacion_password')
